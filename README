@@ -1,6 +1,3 @@
-### 📝 `FADC400_CODE/README.md` (최종 업데이트)
-
-```markdown
 # Notice FADC400 DAQ System (Modernized for Rocky Linux 9)
 
 ## 📌 개요 (Overview)
@@ -120,3 +117,4 @@ frontend_nfadc400 -f vme_fadc400_wrapping/configs/daq.config -t 10
 
 
 ```
+
