@@ -1,0 +1,6 @@
+# UDEV Rule for Notice USB-VME Controller
+# Copy this file to /etc/udev/rules.d/99-nkusbvme.rules
+# Reload: sudo udevadm control --reload-rules && sudo udevadm trigger
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="0547", ATTR{idProduct}=="1095", MODE="0666"
+KERNEL=="nkusbvme*", MODE="0666"

@@ -1,0 +1,33 @@
+FILENAME = NoticeNFADC400
+LIBname  = libNoticeNFADC400_root.so
+CXX      = g++
+ROOTCFLAGS := $(shell root-config --cflags)
+ROOTLIBS   := $(shell root-config --libs)
+
+CXXFLAGS = -fPIC -O2 -Wall -DNKROOT $(ROOTCFLAGS) -I. -I$(NKHOME)/include
+LDFLAGS  = -shared $(ROOTLIBS)
+
+DICT      = G__$(FILENAME)
+DICTSRC   = $(DICT).cxx
+DICTOBJ   = $(DICT).o
+
+all: $(LIBname)
+
+$(LIBname): $(FILENAME).o $(DICTOBJ)
+	# Links against Notice6UVME_root and linux_interface_c
+	$(CXX) $(LDFLAGS) -o $@ $^ -L$(NKHOME)/lib -lNotice6UVME_root -llinux_interface_c
+	@echo "Installing $(LIBname) to $(NKHOME)/lib"
+	cp $(LIBname) $(NKHOME)/lib/
+	cp $(FILENAME).h $(NKHOME)/include/
+
+$(DICTSRC): $(FILENAME).h LinkDef.h
+	rootcling -f $@ -c -I$(NKHOME)/include $^
+
+%.o: %.c
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+%.o: %.cxx
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -f *.o *.so $(DICTSRC) $(DICT)*
