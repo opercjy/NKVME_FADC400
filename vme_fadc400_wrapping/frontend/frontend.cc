@@ -284,48 +284,113 @@ bool opennewfile(const char * fname) {
     return true;
 }
 
+// =============================================================================
+// [Refactored] RunInitialize: Full VME Bus Scan (0~255)
+// =============================================================================
 void RunInitialize() {
     _nkusb = 0;
     
-    // 1. VME 컨트롤러 연결 (필수)
+    // -------------------------------------------------------------------------
+    // 1. VME 컨트롤러 연결 (USB 통신 점검)
+    // -------------------------------------------------------------------------
     if(_kvme.VMEopen(_nkusb) < 0) { 
-        _log.Print(ELog::ERROR, "Failed to open USB-VME Controller."); 
+        _log.Print(ELog::ERROR, "Failed to open USB-VME Controller. Check USB Cable & Power."); 
         exit(1); 
     }
     
-    // 2. 설정된 보드만 순차적으로 초기화 (스캔 로직 제거됨)
+    // -------------------------------------------------------------------------
+    // 2. [진단 모드] VME 버스 전수 조사 (Full Scan 0 ~ 255)
+    // -------------------------------------------------------------------------
+    cout << "\n========================================================" << endl;
+    cout << " [DIAGNOSIS] FULL SCANNING VME Bus (Address 0 to 255)..." << endl;
+    cout << "========================================================" << endl;
+    cout << " -> Scanning in progress";
+
+    vector<int> active_mids;
+    bool found_any = false;
+
+    // 0부터 255까지 모든 가능한 MID를 순회합니다.
+    for (int mid = 0; mid < 256; mid++) {
+        
+        // 진행 상황 표시 (너무 조용하면 답답하므로 점을 찍습니다)
+        if (mid % 16 == 0) cout << "." << flush;
+
+        // 1. 해당 주소로 라이브러리 매핑
+        _kadc.NFADC400open(_nkusb, mid);
+        
+        // 2. [Write/Read Test] 
+        // 0x1234라는 값을 쓰고, 그게 정확히 읽히는지 확인합니다.
+        // 0xFFFF(Floating)나 0(Timeout)이 나오면 보드가 없는 것입니다.
+        _kadc.NFADC400write_RL(_nkusb, mid, 0x1234); 
+        
+        // 약간의 딜레이 (안정성 확보)
+        usleep(100); 
+
+        unsigned long read_val = _kadc.NFADC400read_RL(_nkusb, mid);
+        
+        // 3. 검증 로직
+        if (read_val != 0xFFFF && read_val == 0x1234) {
+            cout << "\n\n [!!! FOUND !!!] Board detected at MID = " << mid << endl;
+            cout << "                 (DIP Switch Binary: " << bitset<8>(mid) << ")" << endl;
+            
+            active_mids.push_back(mid);
+            found_any = true;
+            
+            // 테스트하느라 변경한 값 복구 (기본값 4)
+            _kadc.NFADC400write_RL(_nkusb, mid, 4); 
+        }
+    }
+    cout << "\n -> Scan Finished." << endl;
+
+    // 보드가 하나도 안 잡혔으면 여기서 경고하고 강제 종료해도 됩니다.
+    if (!found_any) {
+        cout << "\n [CRITICAL WARNING] No boards detected in FULL SCAN (0~255)." << endl;
+        cout << "                    Possible Causes:" << endl;
+        cout << "                    1. Bad Slot Connection (Move to another slot!)" << endl;
+        cout << "                    2. VME Crate Power Issue" << endl;
+        exit(1); // 강제로 멈추고 싶으면 주석 해제
+    } else {
+        cout << "\n [ACTION] Please update 'daq.config' with MID: ";
+        for(int m : active_mids) cout << m << " ";
+        cout << endl;
+    }
+    cout << "========================================================\n" << endl;
+
+
+    // -------------------------------------------------------------------------
+    // 3. 실제 설정 파일 적용 (Initialization)
+    // -------------------------------------------------------------------------
     int nbd = _runinfo->GetNFadcBD();
     for(int i=0; i<nbd; i++) {
         FadcBD * fadc = _runinfo->GetFadcBD(i);
         unsigned long mid = fadc->MID();
         int nch = fadc->NCHANNEL();
         
-        _log.Print(ELog::INFO, Form("Initializing FADC [MID=%lu]...", mid));
+        // 설정 파일에 있는 MID가 스캔된 리스트에 없으면 경고
+        bool is_active = false;
+        for(int m : active_mids) if(m == (int)mid) is_active = true;
         
-        // 보드 오픈
-        _kadc.NFADC400open(_nkusb, mid);
-
-        // [최소한의 안전장치] 존재 여부만 조용히 확인
-        // 원본처럼 바로 Write를 하면 원인을 모르고 죽으므로, Check만 하나 둡니다.
-        unsigned long stat = _kadc.NFADC400read_STAT(_nkusb, mid);
-        if (stat != 0xFADC) {
-            // 보드가 죽어있으면 여기서 명확히 멈춤
-            _log.Print(ELog::ERROR, Form(" >> FADC [MID=%lu] Initialization Failed. (No Response: 0x%lx)", mid, stat));
-            _log.Print(ELog::ERROR, " >> Check DIP Switch (MID) or VME Slot Connection.");
-            exit(1); 
+        if (!is_active && found_any) {
+            _log.Print(ELog::WARNING, Form("Configured MID=%lu is NOT detected in scan!", mid));
         }
 
-        // 3. 레지스터 설정 (원본 로직)
+        _kadc.NFADC400open(_nkusb, mid);
+        _log.Print(ELog::INFO, Form("Initializing Configured FADC [MID=%lu]...", mid));
+        
+        // Reset
         _kadc.NFADC400write_RM(_nkusb, mid, 0, 0, 1);
         _kadc.NFADC400reset(_nkusb, mid);
         
+        // Global Registers
         _kadc.NFADC400write_RL(_nkusb, mid, fadc->RL());
         _kadc.NFADC400write_TLT(_nkusb, mid, fadc->TLT());
         _kadc.NFADC400write_TOW(_nkusb, mid, fadc->TOW());
         
+        // Daisy Chain
         if(fadc->DCE() == 0) _kadc.NFADC400enable_DCE(_nkusb, mid);
         else                 _kadc.NFADC400disable_DCE(_nkusb, mid);
         
+        // Channel Registers
         for(int j=0; j<nch; j++) {
             int cid = fadc->CID(j) + 1;
             _kadc.NFADC400write_DACOFF(_nkusb, mid, cid, fadc->DACOFF(j));
@@ -341,13 +406,16 @@ void RunInitialize() {
             _kadc.NFADC400write_PWT(_nkusb, mid, cid, (float)fadc->PWT(j));
         }
         
-        // 설정값 확인 출력
+        // 최종 레지스터 확인 (여기서 0xFFFF 뜨면 정말 연결 안 된 것)
         ShowRegisters(fadc);
     }
     
-    // 데이터 버퍼 초기화
+    // -------------------------------------------------------------------------
+    // 4. 데이터 메모리 할당
+    // -------------------------------------------------------------------------
     if (_runinfo->GetNFadcBD() > 0) _recordlength = _runinfo->GetFadcBD(0)->RL() * 256; 
     else _recordlength = 1024;
+    
     _neventperdump = _runinfo->GetFadcNDumpedEvent(); 
     _rawdata = new TClonesArray("RawChannel", 100);
 }
