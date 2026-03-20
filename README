@@ -1,122 +1,55 @@
-# Notice FADC400 DAQ System (Modernized for Rocky Linux 9)
+# NoticeDAQ (VME FADC400 Data Acquisition System)
 
-## 📌 개요 (Overview)
-이 프로젝트는 **Notice Korea NFADC400 (400MHz FADC)** 모듈을 최신 리눅스 환경(Rocky Linux 9, Kernel 5.14+)과 **ROOT 6**에서 구동하기 위한 소프트웨어 패키지입니다. 
-제조사의 원본 레거시 코드(Legacy Code)를 기반으로 현대적인 빌드 시스템과 드라이버 리셋 기능을 추가하여 안정성을 높였습니다.
+Notice Korea 6UVME 및 NFADC400 모듈을 제어하기 위한 고성능 C++17 / ROOT 6 기반 DAQ 프레임워크입니다.
 
----
+## 🌟 Key Features
+- **Zero Dead-time DAQ**: 하프 버퍼(Ping-Pong) 병렬 판독 및 Multi-threading (Producer-Consumer) 아키텍처 적용
+- **Memory Safety**: `TClonesArray` 와 `ConstructedAt`을 활용한 객체 풀링(Object Pool)으로 메모리 단편화 및 누수(Memory Leak) 완벽 차단
+- **Robust Configuration**: 쌍따옴표 스트리핑, OOM 방어 한계치 검사, Safe-Ignore 패턴이 적용된 무결점 파서
+- **Real-time Monitoring**: 비동기 소켓(`select()`) 기반의 Non-blocking 실시간 4채널 파형 GUI 뷰어 (TCP Backpressure 방어 적용)
+- **Offline Analyzer**: 터미널 입력(`stdin`) 비동기 처리가 적용된 대화형 데이터 분석 파이프라인 및 부동소수점 예외(NaN) 방어
 
-## 🛠️ 주요 기능 (Features)
-* **자동화된 설치:** `install.sh` 스크립트 하나로 드라이버, 라이브러리, DAQ 프로그램을 통합 설치합니다.
-* **무중단 드라이버 로딩:** 재부팅 없이 `rmmod`/`modprobe`를 통해 드라이버를 갱신하는 Soft Reset 기능을 지원합니다.
-* **완벽한 호환성:** 순수 C(`_c`), C++(`_cpp`), ROOT(`_root`) 3가지 버전의 라이브러리를 모두 생성합니다.
-* **하드웨어 교차 검증:** 제조사의 오리지널 테스트 코드를 복원하여 하드웨어 상태를 독립적으로 진단할 수 있습니다.
-
----
-
-## 📂 폴더 구조 (Directory Structure)
-* `notice_vme_nfadc400/`: 핵심 드라이버 및 하위 레벨 API 라이브러리 (Core)
-* `vme_fadc400_wrapping/`: 상위 레벨 DAQ 어플리케이션 (`frontend`, `production`)
-* `test/`: 하드웨어 자체 진단용 도구 모음 (**Legacy Test Code**)
-* `install.sh`: 통합 설치 스크립트
-
----
-
-## 🚀 설치 및 빌드 (Installation)
-
-### 1. 필수 조건
-* **OS:** Rocky Linux 9 (또는 RHEL 9 호환)
-* **Dependencies:** `gcc`, `g++`, `make`, `root` (CERN ROOT 6)
-
-### 2. 통합 설치
-터미널에서 다음 명령어로 전체 시스템을 빌드하고 설치합니다.
-(하위 폴더에 이는 build_notice_xxx.sh 실행 가능하게 권한 부여 해야함)
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-> **참고:** 설치 과정 중 `sudo` 권한이 필요할 수 있습니다. (드라이버 설치 시)
-
----
-## 🧪 하드웨어 진단 (Legacy Test Code)
-
-DAQ 소프트웨어를 실행하기 전에, 하드웨어가 정상적으로 연결되었는지 확인하기 위해 **제조사 원본 기반의 테스트 코드**를 제공합니다. `frontend` 프로그램이 작동하지 않을 때, 가장 먼저 실행해보아야 할 진단 도구입니다.
-
-### 1. 테스트 코드 위치
-* 경로: `test/nfadc400/`
-* 소스 파일: `nfadc400_test.cc` (C++로 포팅된 버전)
-
-### 2. 빌드 및 실행 방법
-별도의 스크립트 없이 터미널에서 직접 빌드하여 실행합니다. (환경 변수 로드 필수)
+## 🛠️ Build & Run
 
 ```bash
-# 1. 환경 변수 로드 (NKHOME 등 라이브러리 경로 설정)
-source vme_fadc400_wrapping/daq_env.sh
+# 1. Environment Setup
+$ source setup.sh
 
-# 2. 테스트 디렉토리로 이동
-cd test/nfadc400
+# 2. Build
+$ mkdir build && cd build
+$cmake ..$ make -j4
 
-# 3. 컴파일 (Makefile 사용)
-make
+# 3. Start Online Monitor (Optional, Background)
+$ ./bin/OnlineMonitor &
 
-# 4. 실행
-./nfadc400_test
-3. 결과 해석 (중요)
-실행 후 터미널에 출력되는 Status 메시지를 확인하십시오.
+# 4. Start DAQ (1-Channel Test Mode)
+$ ./bin/frontend -f ../config/ch1.config -o run_101.root -n 1000
+```
 
-[정상] Status = 0xFADC (OK!)
-
-하드웨어, 드라이버, 라이브러리가 모두 정상입니다.
-
-이제 frontend_nfadc400을 실행하여 데이터를 수집할 수 있습니다.
-
-[오류] Status = 0xFFFF (ERROR!)
-
-VME 컨트롤러가 FADC 보드와 통신하지 못하고 있습니다.
-
-조치 방법:
-
-VME 크레이트 전원을 껐다가 켭니다. (10초 대기)
-
-USB 케이블을 뽑았다가 다시 연결합니다.
-
-보드가 슬롯에 꽉 끼워졌는지 확인합니다. (컨트롤러: Slot 1, FADC: Slot 2)
-
-DIP 스위치가 설정에 해당하는 위치, 예를 들면 설정 파일 0으로 두었다면 MID=0 (모두 아래로), 설정되었는지 확인합니다.
-
-
-
-
----
-
-## 📊 데이터 수집 (Running DAQ)
-
-하드웨어 진단이 통과되었다면, 메인 DAQ 프로그램을 실행합니다.
+#### 📄 2. `setup.sh` (저장소 최상단)
+컴파일 및 실행 전 하드웨어 통신 라이브러리와 ROOT 환경을 잡아주는 스크립트입니다.
 
 ```bash
-# 1. 환경 변수 로드 (필수)
-source vme_fadc400_wrapping/daq_env.sh
+#!/bin/bash
 
-# 2. DAQ 실행 (설정 파일 지정)
-frontend_nfadc400 -f vme_fadc400_wrapping/configs/daq.config -t 10
+# 1. Notice Korea 하드웨어 라이브러리 경로 설정
+export NKHOME=/usr/local/notice
 
+# 2. ROOT 6 환경 설정 (이미 .bashrc 등에 설정되어 있다면 생략 가능)
+if [ -z "$ROOTSYS" ]; then
+    echo "Loading ROOT environment..."
+    # 사용자 환경에 맞는 ROOT thisroot.sh 경로로 수정하세요
+    source /usr/local/bin/thisroot.sh
+fi
+
+# 3. 런타임에 동적 라이브러리를 찾을 수 있도록 PATH 설정
+export DAQ_PROJECT_DIR=$(pwd)
+export LD_LIBRARY_PATH=${NKHOME}/lib:${LD_LIBRARY_PATH}
+
+echo "======================================================"
+echo " NoticeDAQ Environment Setup Completed."
+echo "  * NKHOME          : $NKHOME"
+echo "  * ROOTSYS         : $ROOTSYS"
+echo "  * DAQ_PROJECT_DIR : $DAQ_PROJECT_DIR"
+echo "======================================================"
 ```
-
-* `-t 10`: 10초 동안만 데이터를 받고 종료합니다.
-* `-o filename`: 저장할 파일 이름을 지정합니다. (기본값: `test_run.root`)
-
----
-
-## ⚙️ 설정 파일 가이드 (Configuration)
-
-`vme_fadc400_wrapping/configs/daq.config` 파일에서 실험 조건을 변경할 수 있습니다.
-
-* **MID (Module ID):** 하드웨어 DIP 스위치 값과 일치해야 합니다. (기본값: 0)
-* **TLT (Trigger):** `0xFFFE` (OR Trigger - 테스트용), `0x8000` (AND Trigger - 실험용)
-* **THR (Threshold):** 신호 문턱값. 노이즈 레벨보다 높게 설정하십시오.
-
-
-```
-
-
