@@ -18,6 +18,7 @@ from PyQt5.QtGui import QRegExpValidator, QColor, QTextCursor, QFont
 
 # [핵심] 분리된 HV 컨트롤 패널 임포트 (hv_control.py 파일이 같은 폴더에 있어야 함)
 from hv_control import HVControlPanel
+from tlu_simulator import TLUSimulatorWidget 
 
 # ==========================================================
 # 1. 경로 및 DB 설정
@@ -103,6 +104,10 @@ class DAQControlCenter(QMainWindow):
         self.hv_panel = HVControlPanel()
         self.hv_panel.sig_log.connect(self.print_log) # HV 모듈의 로그를 메인 로그창과 연결
         self.tabs.addTab(self.hv_panel, "⚡ HV Slow Control")
+
+        # [신규] 5번 탭: TLU 시뮬레이터 모듈 추가!
+        self.tlu_panel = TLUSimulatorWidget()
+        self.tabs.addTab(self.tlu_panel, "🎯 TLU Simulator")
         
         # 탭이 바뀔 때 창 크기 재조정
         self.tabs.currentChanged.connect(lambda _: self.adjustSize())
