@@ -3,7 +3,7 @@
 
 Notice Korea 6UVME 및 NFADC400 모듈을 제어하기 위한 고성능 C++17 / ROOT 6 기반 DAQ 프레임워크입니다.
 
-## 🌟 Key Features
+## Key Features
 - **Zero Dead-time DAQ**: 하프 버퍼(Ping-Pong) 병렬 판독 및 Multi-threading (Producer-Consumer) 아키텍처 적용
 - **Memory Safety**: `TClonesArray` 와 `ConstructedAt`을 활용한 객체 풀링(Object Pool)으로 메모리 단편화 및 누수(Memory Leak) 완벽 차단
 - **Robust Configuration**: 쌍따옴표 스트리핑, OOM 방어 한계치 검사, Safe-Ignore 패턴이 적용된 무결점 파서
@@ -12,7 +12,7 @@ Notice Korea 6UVME 및 NFADC400 모듈을 제어하기 위한 고성능 C++17 / 
 
 
 
-## ⚙️ Environment Setup (`setup.sh`)
+## Environment Setup (`setup.sh`)
 
 컴파일 및 실행 전, 하드웨어 통신 라이브러리와 ROOT 환경 변수를 설정해야 합니다. 프로젝트 최상단에 아래 내용으로 `setup.sh` 스크립트를 생성하고 실행하십시오.
 
@@ -43,7 +43,7 @@ echo "======================================================"
 
 ---
 
-## 🛠️ Build & Run
+## Build & Run
 
 ### 1. 환경 설정 적용
 ```bash
