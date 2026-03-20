@@ -22,11 +22,17 @@ set(NKHOME $ENV{NKHOME})
 include_directories(${ROOT_INCLUDE_DIRS} ${NKHOME}/include)
 link_directories(${NKHOME}/lib)
 
+# 하위 C++ 모듈 빌드
 add_subdirectory(objects)
 add_subdirectory(frontend)
 add_subdirectory(display)
 
+# 설정 파일 및 시스템 룰 폴더 복사
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/rules DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
-message(STATUS "Config and Rules directories copied to build folder.")
+# [핵심] GUI 파이썬 스크립트를 bin 폴더로 복사하고 실행 권한(+x) 자동 부여
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/gui/daq_gui.py DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
+     FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+
+message(STATUS "Config, Rules, and GUI scripts successfully copied to build folder.")
