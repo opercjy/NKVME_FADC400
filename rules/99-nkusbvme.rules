@@ -1,0 +1,3 @@
+# UDEV Rule for Notice USB-VME Controller
+SUBSYSTEM=="usb", ATTR{idVendor}=="0547", ATTR{idProduct}=="1095", MODE="0666"
+KERNEL=="nkusbvme*", MODE="0666"
