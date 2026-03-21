@@ -94,9 +94,7 @@ ProductionAnalyzer::~ProductionAnalyzer() {
         if(_histWave[i]) delete _histWave[i];
         if(_lineBsl[i]) delete _lineBsl[i];
         
-        // [핵심 픽스] _hQtot는 _fOut이 닫힐 때 ROOT가 자동으로 메모리를 해제합니다!
-        // 여기서 수동으로 delete 하면 이중 해제(Double Free)가 발생하여 SegFault가 터집니다.
-        // if(_hQtot[i]) delete _hQtot[i];  <-- 이 부분을 영구 삭제했습니다.
+        // _hQtot는 _fOut이 닫힐 때 ROOT가 자동으로 메모리를 해제하므로 삭제 생략
         
         if(_wTime[i]) delete _wTime[i];
         if(_wDrop[i]) delete _wDrop[i];
@@ -107,6 +105,7 @@ ProductionAnalyzer::~ProductionAnalyzer() {
     if (_fOut) { _fOut->Close(); delete _fOut; }
     if (_fIn)  { _fIn->Close();  delete _fIn; }
 }
+
 // =======================================================================
 // Core Analysis Logic
 // =======================================================================
@@ -180,6 +179,7 @@ void ProductionAnalyzer::RunBatch() {
             if (!ch) continue;
             
             int chId = ch->GetChId();
+            // [버그 픽스] Out-of-bounds 방어 로직 (배열 크기 4 이내만 허용)
             if (chId < 0 || chId >= 4) {
                 continue;
             }
@@ -190,11 +190,11 @@ void ProductionAnalyzer::RunBatch() {
             Pmt* pmt = (Pmt*)_pmtArray->ConstructedAt(i);
             pmt->SetId(chId); pmt->SetPedMean(bsl); pmt->SetQmax(amp); pmt->SetQtot(charge); pmt->SetFmax(time);
 
-            if(chId < 4) _hQtot[chId]->Fill(charge);
+            _hQtot[chId]->Fill(charge);
         }
         _tOut->Fill(); 
         
-        // [핵심 추가] 실시간 처리 속도(Speed) 계산
+        // 실시간 처리 속도(Speed) 계산
         if (ev % 1000 == 0 && ev > 0) {
             double curTime = sw.RealTime(); sw.Continue();
             double rate = ev / curTime;
@@ -211,7 +211,7 @@ void ProductionAnalyzer::RunBatch() {
     _tOut->AutoSave();
     for(int i=0; i<4; i++) { if(_hQtot[i]->GetEntries() > 0) _hQtot[i]->Write(); }
 
-    // [핵심 추가] Production 서머리 출력
+    // Production 서머리 출력
     std::cout << "\n\033[1;35m╔═══════════════════ PRODUCTION SUMMARY ════════════════════╗\033[0m" << std::endl;
     std::cout << Form("\033[1;35m║\033[0m \033[1;33m%-20s\033[0m : \033[1;37m%-35d\033[0m \033[1;35m║\033[0m", "Total Processed", _nEntries) << std::endl;
     std::cout << Form("\033[1;35m║\033[0m \033[1;33m%-20s\033[0m : \033[1;37m%-35.2f sec\033[0m \033[1;35m║\033[0m", "Total Elapsed Time", totalTime) << std::endl;
@@ -235,18 +235,23 @@ void ProductionAnalyzer::ShowEvent(int entry) {
         RawChannel* ch = _evtData->GetChannel(i);
         if (!ch) continue;
         
+        int chId = ch->GetChId();
+        // [버그 픽스] chId 인덱스 바운드 방어
+        if (chId < 0 || chId >= 4) continue;
+
         const vector<unsigned short>& wav = ch->GetSamples();
         int ns = wav.size();
 
-        if (!_histWave[i]) {
-            _histWave[i] = new TH1F(Form("h_ev_ch%d", i), Form("Channel %d (Inverted);Time (ns);Voltage Drop (ADC)", ch->GetChId()), ns, 0, ns * 2.5);
-            _histWave[i]->SetDirectory(nullptr); 
-            _histWave[i]->SetLineColor(kBlue + 1);
-            _histWave[i]->SetFillColorAlpha(kBlue - 9, 0.3); 
+        // [버그 픽스] i 대신 물리 채널 번호인 chId를 배열 인덱스로 사용
+        if (!_histWave[chId]) {
+            _histWave[chId] = new TH1F(Form("h_ev_ch%d", chId), Form("Channel %d (Inverted);Time (ns);Voltage Drop (ADC)", chId), ns, 0, ns * 2.5);
+            _histWave[chId]->SetDirectory(nullptr); 
+            _histWave[chId]->SetLineColor(kBlue + 1);
+            _histWave[chId]->SetFillColorAlpha(kBlue - 9, 0.3); 
         }
-        if (_histWave[i]->GetNbinsX() != ns) _histWave[i]->SetBins(ns, 0, ns * 2.5);
+        if (_histWave[chId]->GetNbinsX() != ns) _histWave[chId]->SetBins(ns, 0, ns * 2.5);
         
-        _histWave[i]->Reset();
+        _histWave[chId]->Reset();
         
         double bsl, amp, time, charge;
         AnalyzeWaveform(wav, bsl, amp, time, charge, nullptr, nullptr); // 화면 출력 시 벡터 기록 생략
@@ -254,7 +259,7 @@ void ProductionAnalyzer::ShowEvent(int entry) {
         double minV = 99999, maxV = -99999;
         for (int pt = 0; pt < ns; pt++) {
             double drop = bsl - wav[pt]; 
-            _histWave[i]->SetBinContent(pt + 1, drop);
+            _histWave[chId]->SetBinContent(pt + 1, drop);
             if(drop > maxV) maxV = drop;
             if(drop < minV) minV = drop;
         }
@@ -264,18 +269,18 @@ void ProductionAnalyzer::ShowEvent(int entry) {
         _canvasEvent->cd(i + 1);
         double margin = (maxV - minV) * 0.1;
         if(margin < 10) margin = 10;
-        _histWave[i]->GetYaxis()->SetRangeUser(minV - margin, maxV + margin);
-        _histWave[i]->Draw("HIST");
+        _histWave[chId]->GetYaxis()->SetRangeUser(minV - margin, maxV + margin);
+        _histWave[chId]->Draw("HIST");
 
-        if (_lineBsl[i]) delete _lineBsl[i];
-        _lineBsl[i] = new TLine(0, 0, ns * 2.5, 0); // 반전되었으므로 Baseline은 항상 0
-        _lineBsl[i]->SetLineColor(kRed); 
-        _lineBsl[i]->SetLineStyle(2); 
-        _lineBsl[i]->SetLineWidth(2);
-        _lineBsl[i]->Draw();
+        if (_lineBsl[chId]) delete _lineBsl[chId];
+        _lineBsl[chId] = new TLine(0, 0, ns * 2.5, 0); // 반전되었으므로 Baseline은 항상 0
+        _lineBsl[chId]->SetLineColor(kRed); 
+        _lineBsl[chId]->SetLineStyle(2); 
+        _lineBsl[chId]->SetLineWidth(2);
+        _lineBsl[chId]->Draw();
 
         printf(" \033[1;33m[Ch %d]\033[0m Bsl: %6.1f | Amp: %6.1f | \033[1;32mTime: %6.1f ns\033[0m | Charge: %6.1f \n", 
-               ch->GetChId(), bsl, amp, time, charge);
+               chId, bsl, amp, time, charge);
     }
     _canvasEvent->Update();
 }
