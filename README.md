@@ -2,6 +2,9 @@
 
 # NKVME\_FADC400 : NoticeDAQ Central Control
 
+Notice & License
+본 레포지토리는 하드웨어 제조사인 Notice Korea의 공식적인 동의 및 허가 하에 로우레벨 통신 라이브러리(nfadc400, 6uvme)의 소스 코드를 공유하며, 연구 목적의 프레임워크 통합 및 지속적인 유지보수를 수행하고 있습니다.
+
 **NKVME\_FADC400**은 VME 기반 Notice FADC400 (400MHz, 2.5ns/sample) 보드를 제어하고 데이터를 수집, 모니터링, 오프라인 분석을 수행하는 통합 데이터 획득(DAQ) 프레임워크입니다.
 
 본 시스템은 데이터 처리는 C++ ROOT 백엔드에서, 사용자 인터페이스와 DB 제어는 Python PyQt5 프론트엔드에서 수행하는 하이브리드 아키텍처로 설계되어 안정성과 유지보수 편의성을 제공합니다.
@@ -195,8 +198,8 @@ cd bin/
 ### 6.4 실시간 분석 알고리즘 변경
 
   * DQM 모니터의 Charge 적분 및 Baseline 산출 로직을 변경하려면 `display/src/OnlineMonitor.cc` 파일 내 `HandleTimer()` 함수의 데이터 처리 블록을 수정한 뒤 C++ 코드를 재컴파일해야 합니다.
-  * 
-## 7\. GUI
+
+## 7\. 그래픽 인터페이스 및 사용자 경
 
 <img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/ced23bd3-06b2-4faa-bddb-018c39bbaae2" />
 <img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/d9ad8af2-77a2-4108-b7d8-da7460405d7d" />
@@ -214,8 +217,11 @@ cd bin/
 <img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/5b4f654c-dc68-4775-9a32-a2d3e674f1b2" />
 <img width="1220" height="840" alt="image" src="https://github.com/user-attachments/assets/b23b6cd1-9fbb-4324-8356-56bc3e8720c9" />
 
+## 8\. 감사의 글
 
-
+* 본 데이터 획득 시스템(DAQ)의 개발을 위해 하드웨어 연동 로우레벨 라이브러리(nfadc400, 6uvme)의 소스 코드를 제공하고 기술 지원을 아끼지 않은 Notice Korea 김상열 사장/박사님, 기초과학원(IBD)의 지하실험 연구단 (CUP) 이재승 박사님께 감사를 표합니다.
+* 데이터 직렬화 및 실시간 객체 전송 코어에 사용된 오픈소스 데이터 분석 프레임워크인 CERN ROOT 개발진과, 대시보드 UI 구현에 사용된 PyQt5 커뮤니티의 기여를 인정합니다.
+* 무엇보다 본 프레임워크를 비롯한 기초 과학 연구의 밑바탕에는 국민 여러분께서 땀 흘려 조성해 주신 소중한 연구기금이 있습니다. 대한민국 과학 기술의 진보와 기초 학문의 발전을 위해 묵묵히, 그리고 아낌없는 지지와 성원을 보내주신 국민 여러분께 가장 깊고 진심 어린 감사의 말씀을 올립니다.
 
 
 
