@@ -179,8 +179,12 @@ void ProductionAnalyzer::RunBatch() {
             RawChannel* ch = _evtData->GetChannel(i);
             if (!ch) continue;
             
-            double bsl, amp, time, charge;
             int chId = ch->GetChId();
+            if (chId < 0 || chId >= 4) {
+                continue;
+            }
+
+            double bsl, amp, time, charge;
             AnalyzeWaveform(ch->GetSamples(), bsl, amp, time, charge, _wTime[chId], _wDrop[chId]);
 
             Pmt* pmt = (Pmt*)_pmtArray->ConstructedAt(i);
