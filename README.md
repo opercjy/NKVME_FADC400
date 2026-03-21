@@ -55,7 +55,7 @@ NoticeDAQ/
 ### 1. 환경 설정 및 USB 권한 인가
 처음 1회에 한하여 USB-VME 통신 권한을 시스템에 등록합니다.
 ```bash
-cd rules && sudo ./setup_usb.sh; cd ..
+cd rules && sudo bash setup_usb.sh; cd ..
 source setup.sh
 ```
 
