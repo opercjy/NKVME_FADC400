@@ -20,6 +20,10 @@ add_library(Objects SHARED
     ObjectsDict.cxx
 )
 
-# 하위 모듈이 이 라이브러리를 링크할 때 include 폴더를 자동으로 찾게 함
-target_include_directories(Objects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# [핵심 수정] 딕셔너리 컴파일 시 "include/..." 경로를 찾을 수 있도록 현재 소스 폴더 경로 추가
+target_include_directories(Objects PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 target_link_libraries(Objects PUBLIC ${ROOT_LIBRARIES})

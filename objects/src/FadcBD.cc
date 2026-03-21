@@ -4,7 +4,8 @@ ClassImp(FadcBD)
 
 FadcBD::FadcBD() : TNamed() { InitDefaults(); }
 
-FadcBD::FadcBD(int mid) : TNamed(TString::Format("%d", mid), "") { 
+
+FadcBD::FadcBD(int mid) : TNamed(TString::Format("%d", mid).Data(), "") { 
     InitDefaults(); 
     _mid = mid; 
 }
