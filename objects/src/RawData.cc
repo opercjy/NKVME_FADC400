@@ -4,6 +4,8 @@ ClassImp(RawData)
 
 RawData::RawData() : TObject() {
     _channels = new TClonesArray("RawChannel", 100);
+    // [핵심 픽스] 객체 풀링 재사용 시 TSocket이 데이터를 누락하는 현상 완벽 방지
+    _channels->BypassStreamer(kFALSE); 
 }
 
 RawData::~RawData() {
@@ -21,7 +23,6 @@ void RawData::Clear(Option_t * option) {
 
 RawChannel* RawData::AddChannel(int chId, int nPoints) {
     int n = _channels->GetEntriesFast();
-    // [핵심] Placement New 대신 ConstructedAt을 사용하여 내부 std::vector 메모리 누수 완벽 차단!
     RawChannel* ch = (RawChannel*)_channels->ConstructedAt(n);
     ch->SetChId(chId);
     ch->Reserve(nPoints);

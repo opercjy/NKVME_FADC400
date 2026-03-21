@@ -3,6 +3,7 @@
 
 import sys
 import os
+import sqlite3
 import glob
 import re
 import shutil
@@ -14,16 +15,14 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import QProcess, Qt, QRegExp, QTimer
 from PyQt5.QtGui import QRegExpValidator, QTextCursor, QFont
 
-# --- 분리된 핵심 모듈 임포트 ---
 from hv_control import HVControlPanel
 from tlu_simulator import TLUSimulatorWidget
 from config_manager import ConfigManagerWidget
 from prod_manager import ProductionManagerWidget
-from elog_manager import ELogbookWidget  # [신규] 분리된 DB 모듈
+from elog_manager import ELogbookWidget 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR) 
-
 DB_NAME = os.path.join(PROJECT_ROOT, "daq_history.db")
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 TEMP_CONFIG = os.path.join(CONFIG_DIR, "temp_auto.config")
@@ -34,7 +33,7 @@ EXE_MONITOR = "OnlineMonitor_nfadc400"
 class DAQControlCenter(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NoticeDAQ Central Control (Ultimate Edition)")
+        self.setWindowTitle("6UVME+NFADC400 Central Control")
         self.setMinimumSize(1250, 900)
         self.data_output_dir = PROJECT_ROOT
         
@@ -47,7 +46,12 @@ class DAQControlCenter(QMainWindow):
         self.daq_process.readyReadStandardOutput.connect(self.handle_stdout)
         self.daq_process.readyReadStandardError.connect(self.handle_stderr)
         self.daq_process.finished.connect(self.process_finished)
+        
         self.monitor_process = QProcess(self)
+        
+        # [핵심] 이제 모니터의 로그도 대시보드 콘솔로 가로채옵니다!
+        self.monitor_process.readyReadStandardOutput.connect(self.handle_mon_stdout)
+        self.monitor_process.readyReadStandardError.connect(self.handle_mon_stderr)
 
         self.auto_mode = "NONE" 
         self.scan_queue = []; self.scan_current_val = 0
@@ -73,8 +77,8 @@ class DAQControlCenter(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
 
         top_layout = QHBoxLayout()
-        title_lbl = QLabel("NoticeDAQ Central Control")
-        title_lbl.setFont(QFont("Arial", 16, QFont.Bold))
+        title_lbl = QLabel("6UVME+NFADC400 Central Control")
+        title_lbl.setFont(QFont("Arial", 18, QFont.Bold))
         self.clock_lbl = QLabel("0000-00-00 00:00:00")
         self.clock_lbl.setFont(QFont("Consolas", 14, QFont.Bold))
         top_layout.addWidget(title_lbl); top_layout.addStretch(); top_layout.addWidget(self.clock_lbl)
@@ -117,6 +121,10 @@ class DAQControlCenter(QMainWindow):
         self.prod_panel.sig_log.connect(self.print_log)
         self.tabs.addTab(self.prod_panel, "📦 Offline Production")
 
+        self.elog_panel = ELogbookWidget(DB_NAME)
+        self.elog_panel.sig_log.connect(self.print_log)
+        self.tabs.addTab(self.elog_panel, "🗄️ Database & E-Log")
+
         self.tabs.currentChanged.connect(lambda _: self.adjustSize())
         left_panel.addWidget(self.tabs, stretch=1)
 
@@ -132,8 +140,8 @@ class DAQControlCenter(QMainWindow):
         self.btn_stop_mon.setStyleSheet("background-color: #9E9E9E; color: white; font-weight: bold; padding: 8px;")
         self.btn_stop_mon.clicked.connect(self.stop_monitor)
         
-        self.btn_stop = QPushButton("■ FORCE STOP")
-        self.btn_stop.setStyleSheet("background-color: #F44336; color: white; font-weight: bold; padding: 8px;")
+        self.btn_stop = QPushButton("🛑 ABORT / STOP")
+        self.btn_stop.setStyleSheet("background-color: #E53935; color: white; font-weight: bold; padding: 8px;")
         self.btn_stop.clicked.connect(self.force_stop_daq)
         
         btn_layout.addWidget(self.btn_start_mon); btn_layout.addWidget(self.btn_stop_mon); btn_layout.addWidget(self.btn_stop)
@@ -145,7 +153,8 @@ class DAQControlCenter(QMainWindow):
         dash_group = QGroupBox("Live Status Dashboard")
         dash_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; }")
         dash_layout = QVBoxLayout()
-        dash_layout.setContentsMargins(8, 8, 8, 8); dash_layout.setSpacing(5)
+        dash_layout.setContentsMargins(15, 15, 15, 15) 
+        dash_layout.setSpacing(10) 
         
         self.lbl_dash_mode = QLabel("IDLE")
         self.lbl_dash_mode.setFont(QFont("Arial", 14, QFont.Bold)); self.lbl_dash_mode.setStyleSheet("color: #FF9800;")
@@ -167,11 +176,11 @@ class DAQControlCenter(QMainWindow):
 
         dash_layout.addWidget(QLabel("Acquired Events:"))
         self.lcd_events = QLCDNumber(); self.lcd_events.setDigitCount(9)
-        self.lcd_events.setStyleSheet("background-color: black; color: #00FF00;"); self.lcd_events.setMinimumHeight(35) 
+        self.lcd_events.setStyleSheet("background-color: black; color: #00FF00;"); self.lcd_events.setMinimumHeight(40) 
         dash_layout.addWidget(self.lcd_events)
         
         dash_layout.addWidget(QLabel("Automation Progress:"))
-        self.auto_progress = QProgressBar(); self.auto_progress.setAlignment(Qt.AlignCenter); self.auto_progress.setFixedHeight(18)
+        self.auto_progress = QProgressBar(); self.auto_progress.setAlignment(Qt.AlignCenter); self.auto_progress.setFixedHeight(20)
         dash_layout.addWidget(self.auto_progress)
         
         self.lbl_disk = QLabel("Disk Space: Calculating...")
@@ -188,11 +197,6 @@ class DAQControlCenter(QMainWindow):
         bottom_layout = QHBoxLayout()
         bottom_layout.setContentsMargins(0, 5, 0, 0)
         
-        # [핵심] 분리된 E-Logbook 모듈 인스턴스화
-        self.elog_panel = ELogbookWidget(DB_NAME)
-        self.elog_panel.sig_log.connect(self.print_log)
-        bottom_layout.addWidget(self.elog_panel, stretch=5)
-
         log_group = QGroupBox("System Console"); log_layout = QVBoxLayout(); log_layout.setContentsMargins(5, 5, 5, 5)
         self.lbl_hw_status = QLabel("Hardware Status: Waiting for DAQ...")
         self.lbl_hw_status.setFont(QFont("Consolas", 12, QFont.Bold))
@@ -201,12 +205,10 @@ class DAQControlCenter(QMainWindow):
 
         self.log_viewer = QTextEdit(); self.log_viewer.setReadOnly(True)
         self.log_viewer.setStyleSheet("background-color: #121212; color: #E0E0E0; font-family: 'Consolas', 'Segoe UI Emoji', 'Apple Color Emoji', monospace; font-size: 12px;")
-        log_layout.addWidget(self.log_viewer); log_group.setLayout(log_layout); bottom_layout.addWidget(log_group, stretch=4)
+        log_layout.addWidget(self.log_viewer); log_group.setLayout(log_layout); bottom_layout.addWidget(log_group)
         
-        main_layout.addLayout(bottom_layout)
+        main_layout.addLayout(bottom_layout, stretch=2) 
         self.refresh_configs()
-        
-        # [핵심] 모듈이 로드된 후 Run Number 가져오기
         self.input_runnum.setText(self.elog_panel.get_next_run_number())
 
     def update_data_dir(self, new_dir):
@@ -215,17 +217,30 @@ class DAQControlCenter(QMainWindow):
 
     def init_daq_tabs(self):
         tab_manual = QWidget(); manual_layout = QVBoxLayout(tab_manual)
-        manual_layout.setContentsMargins(8, 8, 8, 8); manual_layout.setSpacing(6)
+        manual_layout.setContentsMargins(8, 8, 8, 8); manual_layout.setSpacing(8)
         
         self.combo_config = QComboBox()
         self.combo_config.currentIndexChanged.connect(self.update_config_summary) 
         self.input_runnum = QLineEdit(); self.input_runnum.setValidator(QRegExpValidator(QRegExp("^[0-9]+$")))
-        self.input_runtype = QLineEdit("TEST"); self.input_desc = QLineEdit()
+        
+        self.combo_runtag = QComboBox()
+        self.combo_runtag.addItems(["TEST", "PHYSICS", "CALIBRATION", "COSMIC"])
+        self.combo_runtag.setStyleSheet("background-color: #FFF3E0;")
+        
+        self.combo_quality = QComboBox()
+        self.combo_quality.addItems(["PENDING (미정)", "GOOD (정상)", "BAD (폐기)"])
+        self.combo_quality.setStyleSheet("background-color: #E8EAF6;")
+        
+        self.input_desc = QLineEdit()
         
         manual_layout.addWidget(QLabel("Base Config File:")); manual_layout.addWidget(self.combo_config)
+        
         row1 = QHBoxLayout(); row1.addWidget(QLabel("Run:")); row1.addWidget(self.input_runnum)
-        row1.addWidget(QLabel("Type:")); row1.addWidget(self.input_runtype)
-        manual_layout.addLayout(row1); manual_layout.addWidget(QLabel("Desc:")); manual_layout.addWidget(self.input_desc)
+        row1.addWidget(QLabel("Tag:")); row1.addWidget(self.combo_runtag)
+        row1.addWidget(QLabel("Quality:")); row1.addWidget(self.combo_quality)
+        manual_layout.addLayout(row1)
+        
+        manual_layout.addWidget(QLabel("Description:")); manual_layout.addWidget(self.input_desc)
         
         stop_group = QGroupBox("Stop Condition")
         stop_layout = QHBoxLayout(); stop_layout.setContentsMargins(5, 10, 5, 5)
@@ -240,7 +255,7 @@ class DAQControlCenter(QMainWindow):
         stop_group.setLayout(stop_layout); manual_layout.addWidget(stop_group)
 
         btn_m = QPushButton("▶ Start Manual DAQ")
-        btn_m.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; font-weight:bold;")
+        btn_m.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; font-weight:bold; font-size: 13px;")
         btn_m.clicked.connect(self.start_manual_daq); manual_layout.addWidget(btn_m); manual_layout.addStretch()
         
         tab_scan = QWidget(); scan_layout = QVBoxLayout(tab_scan)
@@ -258,7 +273,7 @@ class DAQControlCenter(QMainWindow):
         self.spin_scan_val = QSpinBox(); self.spin_scan_val.setRange(1, 10000000); self.spin_scan_val.setValue(5000)
         row_scan_opt.addWidget(self.spin_scan_val); scan_layout.addLayout(row_scan_opt)
         btn_s = QPushButton("🔄 Start Threshold Scan")
-        btn_s.setStyleSheet("background-color: #FF9800; color: white; padding: 8px; font-weight:bold;")
+        btn_s.setStyleSheet("background-color: #FF9800; color: white; padding: 10px; font-weight:bold;")
         btn_s.clicked.connect(self.start_thr_scan); scan_layout.addWidget(btn_s); scan_layout.addStretch()
 
         tab_subrun = QWidget(); subrun_layout = QVBoxLayout(tab_subrun)
@@ -273,7 +288,7 @@ class DAQControlCenter(QMainWindow):
         self.spin_total_chunk = QSpinBox(); self.spin_total_chunk.setRange(1, 1000); self.spin_total_chunk.setValue(10)
         row4.addWidget(QLabel("Value/Chunk:")); row4.addWidget(self.spin_chunk_val); row4.addWidget(QLabel("Total Chunks:")); row4.addWidget(self.spin_total_chunk); subrun_layout.addLayout(row4)
         btn_sub = QPushButton("⏱️ Start Long Run")
-        btn_sub.setStyleSheet("background-color: #009688; color: white; padding: 8px; font-weight:bold;")
+        btn_sub.setStyleSheet("background-color: #009688; color: white; padding: 10px; font-weight:bold;")
         btn_sub.clicked.connect(self.start_subrun); subrun_layout.addWidget(btn_sub); subrun_layout.addStretch()
 
         self.daq_tabs.addTab(tab_manual, "🕹️ Manual DAQ")
@@ -296,7 +311,7 @@ class DAQControlCenter(QMainWindow):
     def start_monitor(self):
         if self.monitor_process.state() != QProcess.Running:
             self.monitor_process.start(os.path.join(CURRENT_DIR, EXE_MONITOR), [])
-            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display started.")
+            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display Process Started.")
             
     def stop_monitor(self):
         if self.monitor_process.state() == QProcess.Running:
@@ -347,6 +362,21 @@ class DAQControlCenter(QMainWindow):
                 self.log_viewer.append(html_line)
         self.log_viewer.moveCursor(QTextCursor.End)
 
+    # [핵심] 모니터 로그 가로채기
+    def handle_mon_stdout(self):
+        raw_data = self.monitor_process.readAllStandardOutput().data().decode("utf8", errors="replace")
+        for line in raw_data.split('\n'):
+            for subline in line.split('\r'):
+                if subline.strip():
+                    self.print_log(f"\033[1;34m[MONITOR]\033[0m {subline.strip()}")
+
+    def handle_mon_stderr(self):
+        raw_data = self.monitor_process.readAllStandardError().data().decode("utf8", errors="replace")
+        for line in raw_data.split('\n'):
+            for subline in line.split('\r'):
+                if subline.strip():
+                    self.print_log(f"\033[1;31m[MON ERROR]\033[0m {subline.strip()}", is_error=True)
+
     def generate_scan_config(self, base_cfg, target_thr):
         with open(base_cfg, 'r') as f: lines = f.readlines()
         with open(TEMP_CONFIG, 'w') as f:
@@ -368,9 +398,7 @@ class DAQControlCenter(QMainWindow):
         self.lbl_elapsed_time.setText("Elapsed: 00:00:00")
         self.lbl_trigger_rate.setText("Trigger Rate: 0.0 Hz")
         
-        self.final_events = "0"
-        self.final_time = "0.0"
-        self.final_rate = "0.0"
+        self.final_events = "0"; self.final_time = "0.0"; self.final_rate = "0.0"
         
         self.tabs.setEnabled(False); self.log_viewer.clear(); self.lcd_events.display(0)
         return True
@@ -385,8 +413,9 @@ class DAQControlCenter(QMainWindow):
         self.auto_mode = "NONE"; run_num = self.input_runnum.text().strip()
         self.lbl_dash_mode.setText(f"MANUAL [{run_num}]")
         
-        # [핵심] E-Logbook 모듈을 통해 DB 기록
-        self.current_run_id = self.elog_panel.record_run(run_num, self.input_runtype.text(), self.input_desc.text())
+        run_tag = self.combo_runtag.currentText()
+        quality = self.combo_quality.currentText().split()[0]
+        self.current_run_id = self.elog_panel.record_run(run_num, "MANUAL", run_tag, quality, self.input_desc.text())
         
         out_root = os.path.join(self.data_output_dir, f"run_{run_num}.root") 
         args = ["-f", self.combo_config.currentData(), "-o", out_root]
@@ -401,7 +430,7 @@ class DAQControlCenter(QMainWindow):
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
             self.manual_timer.start(val * 1000)
         else:
-            self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ running continuously. (Press FORCE STOP to end)")
+            self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ running continuously. (Press ABORT to end)")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
 
     def start_thr_scan(self):
@@ -420,8 +449,7 @@ class DAQControlCenter(QMainWindow):
         run_str = f"{self.current_base_runnum}_THR{self.scan_current_val}"
         self.lbl_dash_mode.setText(f"SCAN [THR={self.scan_current_val}]")
         
-        # [핵심] E-Logbook 모듈을 통해 DB 기록
-        self.current_run_id = self.elog_panel.record_run(run_str, "SCAN", f"Auto Scan: THR={self.scan_current_val}")
+        self.current_run_id = self.elog_panel.record_run(run_str, "SCAN", "CALIBRATION", "PENDING", f"Auto Scan: THR={self.scan_current_val}")
         out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root") 
         
         args = ["-f", cfg_path, "-o", out_root]; val = self.spin_scan_val.value()
@@ -451,8 +479,7 @@ class DAQControlCenter(QMainWindow):
         run_str = f"{self.current_base_runnum}_part{self.current_subrun_idx:02d}"
         self.lbl_dash_mode.setText(f"LONG RUN [{self.current_subrun_idx}/{self.subrun_max_idx}]")
         
-        # [핵심] E-Logbook 모듈을 통해 DB 기록
-        self.current_run_id = self.elog_panel.record_run(run_str, "LONG_RUN", f"Chunk {self.current_subrun_idx}/{self.subrun_max_idx}")
+        self.current_run_id = self.elog_panel.record_run(run_str, "LONG_RUN", "PHYSICS", "PENDING", f"Chunk {self.current_subrun_idx}/{self.subrun_max_idx}")
         out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root")
         
         args = ["-f", self.combo_config.currentData(), "-o", out_root]; val = self.spin_chunk_val.value()
@@ -474,16 +501,13 @@ class DAQControlCenter(QMainWindow):
         self.subrun_timer.stop(); self.scan_timer.stop(); self.manual_timer.stop()
         
         if self.daq_process.state() == QProcess.Running:
-            self.print_log("\033[1;31m[SYSTEM] Force stopping DAQ gracefully...\033[0m", is_error=True)
+            self.print_log("\033[1;31m[SYSTEM] ABORTING DAQ gracefully...\033[0m", is_error=True)
             self.daq_process.terminate()
         self.hv_panel.force_shutdown()
 
     def auto_finish(self):
         self.auto_mode = "NONE"; self.lbl_dash_mode.setText("IDLE"); self.tabs.setEnabled(True)
-        
-        # [핵심] E-Logbook 모듈에서 Run Number 갱신
         self.input_runnum.setText(self.elog_panel.get_next_run_number()) 
-        
         self.print_log("\n\033[1;32m[SYSTEM]\033[0m === Sequences Completed Successfully! ===")
         self.lbl_trigger_rate.setText("Trigger Rate: 0.0 Hz")
         self.daq_start_timestamp = None
@@ -525,7 +549,6 @@ class DAQControlCenter(QMainWindow):
         self.print_log(self.daq_process.readAllStandardError().data().decode("utf8", errors="replace"), is_error=True)
 
     def process_finished(self):
-        # [핵심] E-Logbook 클래스에 파싱된 데이터를 넘겨 DB 업데이트
         if hasattr(self, 'current_run_id'):
             status_str = "COMPLETED"
             if hasattr(self, 'final_events') and self.final_events != "0":
