@@ -16,12 +16,12 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import QProcess, Qt, QRegExp, QTimer
 from PyQt5.QtGui import QRegExpValidator, QColor, QTextCursor, QFont
 
-# [핵심] 분리된 HV 컨트롤 패널 임포트 (hv_control.py 파일이 같은 폴더에 있어야 함)
+# [핵심] 분리된 하드웨어 제어 패널과 TLU 시뮬레이터 임포트
 from hv_control import HVControlPanel
-from tlu_simulator import TLUSimulatorWidget 
+from tlu_simulator import TLUSimulatorWidget
 
 # ==========================================================
-# 1. 경로 및 DB 설정
+# 1. 경로, DB 및 하드웨어 타겟(실행 파일) 설정
 # ==========================================================
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR) 
@@ -29,6 +29,11 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 DB_NAME = os.path.join(PROJECT_ROOT, "daq_history.db")
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 TEMP_CONFIG = os.path.join(CONFIG_DIR, "temp_auto.config")
+
+# [하드웨어 모델별 실행 파일명 정의] - 향후 KADC500 도입 시 여기만 변경하면 됩니다.
+EXE_FRONTEND = "frontend_nfadc400"
+EXE_PRODUCTION = "production_nfadc400"
+EXE_MONITOR = "OnlineMonitor_nfadc400"
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -46,7 +51,6 @@ class DAQControlCenter(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("NoticeDAQ Slow Control & Auto-Sequencer")
-        # 동적 창 확장을 위해 최소 사이즈 지정
         self.setMinimumSize(1150, 850)
         
         # 비동기 프로세스 제어
@@ -100,16 +104,16 @@ class DAQControlCenter(QMainWindow):
         # 1~3번 DAQ 탭 초기화
         self.init_daq_tabs()
 
-        # 4번 탭: HV 제어 모듈 통합 (분리된 파일에서 불러옴)
+        # 4번 탭: HV 제어 모듈 통합
         self.hv_panel = HVControlPanel()
-        self.hv_panel.sig_log.connect(self.print_log) # HV 모듈의 로그를 메인 로그창과 연결
+        self.hv_panel.sig_log.connect(self.print_log)
         self.tabs.addTab(self.hv_panel, "⚡ HV Slow Control")
 
-        # [신규] 5번 탭: TLU 시뮬레이터 모듈 추가!
+        # 5번 탭: TLU 시뮬레이터 통합
         self.tlu_panel = TLUSimulatorWidget()
         self.tabs.addTab(self.tlu_panel, "🎯 TLU Simulator")
         
-        # 탭이 바뀔 때 창 크기 재조정
+        # 탭이 바뀔 때 창 크기 자동 재조정
         self.tabs.currentChanged.connect(lambda _: self.adjustSize())
 
         left_panel.addWidget(self.tabs)
@@ -132,13 +136,11 @@ class DAQControlCenter(QMainWindow):
         dash_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; }")
         dash_layout = QVBoxLayout()
 
-        # 현재 모드
         self.lbl_dash_mode = QLabel("IDLE")
         self.lbl_dash_mode.setFont(QFont("Arial", 16, QFont.Bold))
         self.lbl_dash_mode.setStyleSheet("color: #FF9800;")
         dash_layout.addWidget(QLabel("Current Mode:")); dash_layout.addWidget(self.lbl_dash_mode)
 
-        # 획득 이벤트 수 (LCD)
         dash_layout.addWidget(QLabel("Acquired Events (Current Step):"))
         self.lcd_events = QLCDNumber()
         self.lcd_events.setDigitCount(9)
@@ -146,14 +148,12 @@ class DAQControlCenter(QMainWindow):
         self.lcd_events.setMinimumHeight(50)
         dash_layout.addWidget(self.lcd_events)
 
-        # 자동화 진행률 바
         dash_layout.addWidget(QLabel("Automation Progress:"))
         self.auto_progress = QProgressBar()
         self.auto_progress.setValue(0)
         self.auto_progress.setAlignment(Qt.AlignCenter)
         dash_layout.addWidget(self.auto_progress)
 
-        # 디스크 용량 확인
         self.lbl_disk = QLabel("Disk Space: Calculating...")
         dash_layout.addWidget(self.lbl_disk)
 
@@ -272,7 +272,6 @@ class DAQControlCenter(QMainWindow):
     # ==========================================================
     def update_clock(self):
         self.clock_lbl.setText(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        # 디스크 용량 모니터링
         total, used, free = shutil.disk_usage("/")
         gb_free = free // (2**30)
         self.lbl_disk.setText(f"Disk Free Space: {gb_free} GB")
@@ -321,12 +320,10 @@ class DAQControlCenter(QMainWindow):
         self.load_history()
 
     # ==========================================================
-    # 4. 자동화 제어 로직 (동적 Config 생성)
+    # 4. 자동화 제어 로직
     # ==========================================================
     def generate_scan_config(self, base_cfg, target_thr):
-        """정규식을 이용해 기존 Config의 THR 값을 덮어씌운 임시 Config 생성"""
         with open(base_cfg, 'r') as f: lines = f.readlines()
-        
         with open(TEMP_CONFIG, 'w') as f:
             for line in lines:
                 if line.strip().startswith("THR"):
@@ -351,14 +348,13 @@ class DAQControlCenter(QMainWindow):
             return False
 
         if self.cb_auto_monitor.isChecked() and self.monitor_process.state() != QProcess.Running:
-            self.monitor_process.start(os.path.join(CURRENT_DIR, "OnlineMonitor"), [])
+            self.monitor_process.start(os.path.join(CURRENT_DIR, EXE_MONITOR), [])
         
-        self.tabs.setEnabled(False) # 실행 중 탭 조작 방지
+        self.tabs.setEnabled(False)
         self.log_viewer.clear()
         self.lcd_events.display(0)
         return True
 
-    # --- 탭 1: 수동 실행 ---
     def start_manual_daq(self):
         if not self.pre_start_check(): return
         self.auto_mode = "NONE"
@@ -369,9 +365,8 @@ class DAQControlCenter(QMainWindow):
         
         out_root = os.path.join(PROJECT_ROOT, f"run_{run_num}.root")
         self.print_log(f"[SYSTEM] Starting Manual DAQ -> {out_root}")
-        self.daq_process.start(os.path.join(CURRENT_DIR, "frontend"), ["-f", self.combo_config.currentData(), "-o", out_root])
+        self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), ["-f", self.combo_config.currentData(), "-o", out_root])
 
-    # --- 탭 2: 스캔 실행 ---
     def start_thr_scan(self):
         if not self.pre_start_check(): return
         self.auto_mode = "SCAN"
@@ -404,9 +399,8 @@ class DAQControlCenter(QMainWindow):
         events = self.input_scan_evt.text().strip()
         
         self.print_log(f"\n[AUTO] Starting Scan Step: THR={self.scan_current_val} ({events} events)")
-        self.daq_process.start(os.path.join(CURRENT_DIR, "frontend"), ["-f", cfg_path, "-o", out_root, "-n", events])
+        self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), ["-f", cfg_path, "-o", out_root, "-n", events])
 
-    # --- 탭 3: 장기 런(Sub-run) 분할 실행 ---
     def start_subrun(self):
         if not self.pre_start_check(): return
         self.auto_mode = "SUBRUN"
@@ -433,22 +427,20 @@ class DAQControlCenter(QMainWindow):
         out_root = os.path.join(PROJECT_ROOT, f"run_{run_str}.root")
         self.print_log(f"\n[AUTO] Starting Sub-run Chunk {self.current_subrun_idx}...")
         
-        self.daq_process.start(os.path.join(CURRENT_DIR, "frontend"), ["-f", self.combo_config.currentData(), "-o", out_root])
+        self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), ["-f", self.combo_config.currentData(), "-o", out_root])
         
-        # 지정된 분(Min) 타이머 가동 -> 완료 시 trigger_subrun_rotation 호출
         msec = self.spin_chunk_min.value() * 60 * 1000
         self.subrun_timer.start(msec)
 
     def trigger_subrun_rotation(self):
         self.subrun_timer.stop()
         self.print_log(f"[AUTO] Chunk time reached. Rotating to next file...", is_error=True)
-        self.daq_process.terminate() # 안전 종료 유도 -> process_finished 에서 다음 스텝 실행
+        self.daq_process.terminate() 
 
     # ==========================================================
     # 5. 프로세스 통신 및 종료 제어
     # ==========================================================
     def force_stop_daq(self):
-        """ 모든 스케줄을 파기하고 DAQ 프로세스 및 HV 안전 종료 """
         self.auto_mode = "NONE"
         self.scan_queue.clear()
         self.subrun_timer.stop()
@@ -457,7 +449,6 @@ class DAQControlCenter(QMainWindow):
             self.print_log("[SYSTEM] Force stopping DAQ gracefully...", is_error=True)
             self.daq_process.terminate()
             
-        # [핵심] 분리된 HV 모듈에 종료 명령 하달 (아날로그 예외처리는 모듈 내부에서 처리됨)
         self.hv_panel.force_shutdown()
 
     def auto_finish(self):
@@ -472,7 +463,6 @@ class DAQControlCenter(QMainWindow):
         
         for line in lines:
             if not line.strip(): continue
-            # 정규식으로 이벤트 숫자 가로채서 LCD 갱신
             match_ev = re.search(r'Events:\s*(\d+)', line)
             if match_ev:
                 self.lcd_events.display(int(match_ev.group(1)))
@@ -484,7 +474,6 @@ class DAQControlCenter(QMainWindow):
         self.print_log(data, is_error=True)
 
     def process_finished(self):
-        # 1. DB 기록 완료 처리
         if hasattr(self, 'current_run_id'):
             conn = sqlite3.connect(DB_NAME)
             cur = conn.cursor()
@@ -493,7 +482,6 @@ class DAQControlCenter(QMainWindow):
             conn.close()
             self.load_history()
 
-        # 2. 자동화 상태 머신 분기
         if self.auto_mode == "SCAN":
             self.print_log(f"[AUTO] Step THR={self.scan_current_val} finished. Preparing next...")
             QTimer.singleShot(1000, self.run_next_scan_step)
@@ -507,7 +495,6 @@ class DAQControlCenter(QMainWindow):
             self.auto_finish()
 
     def closeEvent(self, event):
-        """ GUI X버튼 종료 시 최후의 보루 방어 로직 """
         if self.daq_process.state() == QProcess.Running or self.hv_panel.caen.is_connected:
             reply = QMessageBox.question(self, 'System Alert',
                 "DAQ is running or HV is connected!\nStop all processes, turn off HV, and exit?",
@@ -515,7 +502,6 @@ class DAQControlCenter(QMainWindow):
 
             if reply == QMessageBox.Yes:
                 self.force_stop_daq()
-                # 데이터가 파일에 다 써질 때까지 최대 3초 블로킹 대기
                 if self.daq_process.state() == QProcess.Running:
                     self.daq_process.waitForFinished(3000) 
                 if self.monitor_process.state() == QProcess.Running:
