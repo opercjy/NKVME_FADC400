@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 #include <algorithm> 
-#include <cstdlib>   // strtoul 사용을 위한 헤더 포함
+#include <cstdlib>
 
 bool ConfigParser::Parse(const char* filename, RunInfo* runinfo) {
     std::ifstream ticket(filename);
@@ -149,54 +149,54 @@ bool ConfigParser::Parse(const char* filename, RunInfo* runinfo) {
                     bd->SetDLY(i, val);
                 }
             }
-            // [Safe Ignore] 검증만 하고 주석 처리하여 안전성 확보
+            // [수정 완료] 주석 해제하여 완벽하게 하드웨어 값 적용
             else if (key == "DACOFF") {
                 for (int i = 0; i < safe_channels; i++) {
                     int val = ((TObjString*)token->At(2 + i))->String().Atoi();
                     if (val < 0 || val > 4095) continue;
-                    // bd->SetDACOFF(i, val); 
+                    bd->SetDACOFF(i, val); 
                 }
             }
             else if (key == "DT") {
                 for (int i = 0; i < safe_channels; i++) {
                     int val = ((TObjString*)token->At(2 + i))->String().Atoi();
                     if (val < 0) continue;
-                    // bd->SetDT(i, val);
+                    bd->SetDT(i, val);
                 }
             }
             else if (key == "CW") {
                 for (int i = 0; i < safe_channels; i++) {
                     int val = ((TObjString*)token->At(2 + i))->String().Atoi();
                     if (val < 0) continue;
-                    // bd->SetCW(i, val);
+                    bd->SetCW(i, val);
                 }
             }
             else if (key == "TM") {
                 for (int i = 0; i < safe_channels; i++) {
                     int val = ((TObjString*)token->At(2 + i))->String().Atoi();
-                    if (val < 0 || val > 2) continue;
-                    // bd->SetTM(i, val);
+                    if (val < 0 || val > 3) continue;
+                    bd->SetTM(i, val);
                 }
             }
             else if (key == "PCT") {
                 for (int i = 0; i < safe_channels; i++) {
                     int val = ((TObjString*)token->At(2 + i))->String().Atoi();
                     if (val < 1) continue;
-                    // bd->SetPCT(i, val);
+                    bd->SetPCT(i, val);
                 }
             }
             else if (key == "PCI") {
                 for (int i = 0; i < safe_channels; i++) {
                     int val = ((TObjString*)token->At(2 + i))->String().Atoi();
                     if (val < 0) continue;
-                    // bd->SetPCI(i, val);
+                    bd->SetPCI(i, val);
                 }
             }
             else if (key == "PWT") {
                 for (int i = 0; i < safe_channels; i++) {
                     int val = ((TObjString*)token->At(2 + i))->String().Atoi();
                     if (val < 0) continue;
-                    // bd->SetPWT(i, val);
+                    bd->SetPWT(i, val);
                 }
             }
         }

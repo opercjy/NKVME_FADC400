@@ -128,14 +128,61 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    // [수정 완료] 하드웨어 통신 및 파라미터 전송 로직 완벽 보강
     int nbd = runInfo->GetNFadcBD();
     for (int i = 0; i < nbd; i++) {
-        unsigned long mid = runInfo->GetFadcBD(i)->MID();
+        FadcBD* bd = runInfo->GetFadcBD(i);
+        unsigned long mid = bd->MID();
+        
         fadc.NFADC400open(mid);
+        
+        // 1. 하드웨어 생존 및 MID 일치 검증
+        unsigned long stat = fadc.NFADC400read_STAT(mid);
+        if (stat == 0xFFFFFFFF) {
+            ELog::Print(ELog::FATAL, "==============================================================");
+            ELog::Print(ELog::FATAL, Form(" [FATAL ERROR] FADC Board (MID: %lu) Not Found or Mismatch!", mid));
+            ELog::Print(ELog::FATAL, "==============================================================");
+            ELog::Print(ELog::FATAL, "  1. Check if the VME crate is powered ON.");
+            ELog::Print(ELog::FATAL, "  2. Check if the Rotary Switch matches the config file MID.");
+            ELog::Print(ELog::FATAL, "  3. Check USB/Optical link connections.");
+            ELog::Print(ELog::FATAL, "==============================================================");
+            vme.VMEclose();
+            return 1;
+        }
+        
+        ELog::Print(ELog::INFO, Form("Board MID %lu connected. Writing parameters to Hardware...", mid));
+        
         fadc.NFADC400reset(mid);
-        fadc.NFADC400write_RL(mid, runInfo->GetFadcBD(i)->RL());
-        fadc.NFADC400write_TLT(mid, runInfo->GetFadcBD(i)->TLT());
-        fadc.NFADC400write_TOW(mid, runInfo->GetFadcBD(i)->TOW());
+        
+        // 2. Global Parameters (공통 설정)
+        fadc.NFADC400write_RL(mid, bd->RL());
+        fadc.NFADC400write_TLT(mid, bd->TLT());
+        fadc.NFADC400write_TOW(mid, bd->TOW());
+        if (bd->DCE()) fadc.NFADC400enable_DCE(mid);
+        else fadc.NFADC400disable_DCE(mid);
+        
+        // 3. Channel Parameters (각 채널별 개별 설정 전송 루프)
+        for (int ch = 0; ch < bd->NCHANNEL(); ch++) {
+            int cid = bd->CID(ch) + 1; // VME 라이브러리 규격에 맞춰 +1 (1~4채널)
+            
+            fadc.NFADC400write_THR(mid, cid, bd->THR(ch));
+            fadc.NFADC400write_POL(mid, cid, bd->POL(ch));
+            fadc.NFADC400write_DACOFF(mid, cid, bd->DACOFF(ch));
+            fadc.NFADC400write_DLY(mid, cid, bd->DLY(ch));
+            fadc.NFADC400write_DACGAIN(mid, cid, bd->DACGAIN(ch));
+            fadc.NFADC400write_DT(mid, cid, bd->DT(ch));
+            fadc.NFADC400write_CW(mid, cid, bd->CW(ch));
+            
+            // TM(Trigger Mode)의 ew, en 분리 전송
+            int tm_val = bd->TM(ch);
+            int ew = (tm_val & 0x2) >> 1;
+            int en = (tm_val & 0x1);
+            fadc.NFADC400write_TM(mid, cid, ew, en);
+            
+            fadc.NFADC400write_PCT(mid, cid, bd->PCT(ch));
+            fadc.NFADC400write_PCI(mid, cid, bd->PCI(ch));
+            fadc.NFADC400write_PWT(mid, cid, bd->PWT(ch));
+        }
     }
 
     TFile* hfile = new TFile(outFile.Data(), "RECREATE");
@@ -220,7 +267,8 @@ int main(int argc, char ** argv) {
         }
 
         if (nevt % (hevt * 4) == 0) {
-            printf("\rEvents: %d | Time: %.1f s | DataQ: %zu | Pool: %zu ", 
+            // [수정] 상태 표시줄을 이모지와 색상을 활용해 서버 모니터링 툴처럼 꾸밉니다.
+            printf("\r\033[1;32m ⚡ Events: %-8d\033[0m | \033[1;33m⏱ Time: %-5.1f s\033[0m | \033[1;36m💾 DataQ: %-4zu\033[0m | \033[1;35m♻ Pool: %-4zu\033[0m", 
                    nevt, sw.RealTime(), g_dataQueue.Size(), g_freeQueue.Size());
             fflush(stdout);
             sw.Continue();

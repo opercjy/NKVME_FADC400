@@ -46,7 +46,7 @@ class DAQControlCenter(QMainWindow):
         self.setWindowTitle("NoticeDAQ Central Control (Ultimate Edition)")
         self.setMinimumSize(1250, 900)
         
-        self.data_output_dir = PROJECT_ROOT # 초기 데이터 저장 경로는 프로젝트 루트
+        self.data_output_dir = PROJECT_ROOT
         
         self.daq_process = QProcess(self)
         self.daq_process.readyReadStandardOutput.connect(self.handle_stdout)
@@ -60,6 +60,9 @@ class DAQControlCenter(QMainWindow):
         self.scan_timer.timeout.connect(self.trigger_scan_timeout)
         self.subrun_timer = QTimer(self)
         self.subrun_timer.timeout.connect(self.trigger_subrun_rotation)
+        
+        self.manual_timer = QTimer(self)
+        self.manual_timer.timeout.connect(self.trigger_manual_timeout)
         
         self.current_base_runnum = ""; self.current_subrun_idx = 1; self.subrun_max_idx = 1
 
@@ -94,7 +97,6 @@ class DAQControlCenter(QMainWindow):
         self.tlu_panel = TLUSimulatorWidget()
         self.tabs.addTab(self.tlu_panel, "🎯 TLU Simulator")
 
-        # [신규 모듈] Config & Path Manager 통합
         self.config_panel = ConfigManagerWidget(CONFIG_DIR, self.data_output_dir)
         self.config_panel.sig_config_updated.connect(self.refresh_configs)
         self.config_panel.sig_dir_changed.connect(self.update_data_dir)
@@ -157,19 +159,28 @@ class DAQControlCenter(QMainWindow):
         db_group.setLayout(db_layout)
         bottom_layout.addWidget(db_group, stretch=5)
 
+        # [개선] 콘솔 출력 시인성 개선 및 하드웨어 실시간 상태 전용 라벨
         log_group = QGroupBox("System Console"); log_layout = QVBoxLayout()
+        
+        self.lbl_hw_status = QLabel("Hardware Status: Waiting for DAQ...")
+        self.lbl_hw_status.setFont(QFont("Consolas", 13, QFont.Bold))
+        self.lbl_hw_status.setStyleSheet("background-color: #1A1A1A; color: #FFD740; padding: 5px; border-radius: 4px;")
+        log_layout.addWidget(self.lbl_hw_status)
+
         self.log_viewer = QTextEdit(); self.log_viewer.setReadOnly(True)
-        self.log_viewer.setStyleSheet("background-color: #1E1E1E; color: #00FF00; font-family: monospace;")
-        log_layout.addWidget(self.log_viewer); log_group.setLayout(log_layout)
+        # 폰트에 Emoji 지원 글꼴(Segoe UI Emoji, Apple Color Emoji) 다중 선언
+        self.log_viewer.setStyleSheet("background-color: #121212; color: #E0E0E0; font-family: 'Consolas', 'Segoe UI Emoji', 'Apple Color Emoji', monospace; font-size: 13px;")
+        log_layout.addWidget(self.log_viewer)
+        log_group.setLayout(log_layout)
         bottom_layout.addWidget(log_group, stretch=4)
+        
         main_layout.addLayout(bottom_layout)
 
         self.refresh_configs()
 
     def update_data_dir(self, new_dir):
-        """ Config 패널에서 폴더를 변경하면 이 함수가 호출되어 전역 변수를 수정합니다. """
         self.data_output_dir = new_dir
-        self.print_log(f"[SYSTEM] Data output directory changed to: {self.data_output_dir}")
+        self.print_log(f"\033[1;36m[SYSTEM]\033[0m Data output directory changed to: {self.data_output_dir}")
 
     def init_daq_tabs(self):
         tab_manual = QWidget(); manual_layout = QVBoxLayout(tab_manual)
@@ -182,9 +193,32 @@ class DAQControlCenter(QMainWindow):
         row1 = QHBoxLayout(); row1.addWidget(QLabel("Run:")); row1.addWidget(self.input_runnum)
         row1.addWidget(QLabel("Type:")); row1.addWidget(self.input_runtype); manual_layout.addLayout(row1)
         manual_layout.addWidget(QLabel("Desc:")); manual_layout.addWidget(self.input_desc)
-        btn_m = QPushButton("▶ Start Manual DAQ"); btn_m.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; font-weight:bold;")
+        
+        # [핵심 개선] 매뉴얼 DAQ 종료 조건 설정 UI 분리
+        stop_group = QGroupBox("Stop Condition (수동 수집 종료 조건)")
+        stop_layout = QHBoxLayout()
+        self.bg_manual = QButtonGroup()
+        self.rb_manual_cont = QRadioButton("Continuous (수동 정지)")
+        self.rb_manual_evt = QRadioButton("By Events")
+        self.rb_manual_time = QRadioButton("By Time (Sec)")
+        
+        self.rb_manual_cont.setChecked(True)
+        self.bg_manual.addButton(self.rb_manual_cont); self.bg_manual.addButton(self.rb_manual_evt); self.bg_manual.addButton(self.rb_manual_time)
+        
+        self.spin_manual_val = QSpinBox()
+        self.spin_manual_val.setRange(1, 10000000); self.spin_manual_val.setValue(5000); self.spin_manual_val.setEnabled(False)
+        self.rb_manual_cont.toggled.connect(lambda: self.spin_manual_val.setEnabled(not self.rb_manual_cont.isChecked()))
+        
+        stop_layout.addWidget(self.rb_manual_cont); stop_layout.addWidget(self.rb_manual_evt)
+        stop_layout.addWidget(self.rb_manual_time); stop_layout.addWidget(self.spin_manual_val)
+        stop_group.setLayout(stop_layout)
+        manual_layout.addWidget(stop_group)
+
+        btn_m = QPushButton("▶ Start Manual DAQ")
+        btn_m.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; font-weight:bold;")
         btn_m.clicked.connect(self.start_manual_daq); manual_layout.addWidget(btn_m); manual_layout.addStretch()
         
+        # Scan Tab
         tab_scan = QWidget(); scan_layout = QVBoxLayout(tab_scan)
         scan_layout.addWidget(QLabel("자동으로 Threshold(THR) 값을 변경하며 스캔합니다."))
         row2 = QHBoxLayout()
@@ -205,6 +239,7 @@ class DAQControlCenter(QMainWindow):
         btn_s = QPushButton("🔄 Start Threshold Scan"); btn_s.setStyleSheet("background-color: #FF9800; color: white; padding: 10px; font-weight:bold;")
         btn_s.clicked.connect(self.start_thr_scan); scan_layout.addWidget(btn_s); scan_layout.addStretch()
 
+        # Long Run Tab
         tab_subrun = QWidget(); subrun_layout = QVBoxLayout(tab_subrun)
         subrun_layout.addWidget(QLabel("지정된 조건(시간/이벤트) 단위로 파일을 분할 수집합니다."))
         self.bg_long = QButtonGroup()
@@ -236,14 +271,13 @@ class DAQControlCenter(QMainWindow):
         self.txt_config_summary.setText(summary)
 
     def get_next_run_number(self):
-        """ [AI 제안 기능] DB를 조회하여 자동으로 다음 Run 번호를 계산합니다. """
         conn = sqlite3.connect(DB_NAME); cur = conn.cursor()
         cur.execute("SELECT run_num FROM run_history ORDER BY id DESC LIMIT 10")
         rows = cur.fetchall()
         conn.close()
         max_num = 0
         for row in rows:
-            run_str = str(row[0]).split('_')[0] # _THR50 같은 접미사 제거
+            run_str = str(row[0]).split('_')[0]
             if run_str.isdigit() and int(run_str) > max_num:
                 max_num = int(run_str)
         return str(max_num + 1) if max_num > 0 else "100"
@@ -263,7 +297,6 @@ class DAQControlCenter(QMainWindow):
                     elif "COMPLETED" in str(col_data): item.setForeground(QColor("green"))
                 self.table.setItem(row_idx, col_idx, item)
         conn.close()
-        # 로드 완료 시 다음 런 번호 자동 추천
         self.input_runnum.setText(self.get_next_run_number())
 
     def save_history(self):
@@ -275,22 +308,22 @@ class DAQControlCenter(QMainWindow):
             desc = self.table.item(row, 3).text()
             cur.execute("UPDATE run_history SET run_num=?, run_type=?, description=? WHERE id=?", (run_num, run_type, desc, idx))
         conn.commit(); conn.close()
-        self.print_log("[DB] E-Logbook modifications saved.")
+        self.print_log("\033[1;32m[DB]\033[0m E-Logbook modifications saved.")
         self.load_history()
 
     def start_monitor(self):
         if self.monitor_process.state() != QProcess.Running:
             self.monitor_process.start(os.path.join(CURRENT_DIR, EXE_MONITOR), [])
-            self.print_log("[MONITOR] Online Display started.")
+            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display started.")
             
     def stop_monitor(self):
         if self.monitor_process.state() == QProcess.Running:
             self.monitor_process.terminate()
-            self.print_log("[MONITOR] Online Display stopped.")
+            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display stopped.")
 
     def update_clock(self):
         self.clock_lbl.setText(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        total, used, free = shutil.disk_usage(self.data_output_dir) # 현재 저장 경로 기준 디스크 체크
+        total, used, free = shutil.disk_usage(self.data_output_dir)
         gb_free = free // (2**30)
         self.lbl_disk.setText(f"Disk Free [{os.path.basename(self.data_output_dir)}]: {gb_free} GB")
         self.lbl_disk.setStyleSheet("color: red; font-weight: bold;" if gb_free < 5 else "color: black;")
@@ -302,11 +335,30 @@ class DAQControlCenter(QMainWindow):
                 self.combo_config.addItem(os.path.basename(cfg), cfg)
         self.update_config_summary()
 
+    # [핵심 개선] ANSI 이스케이프 컬러 코드를 HTML 색상 태그로 변환하여 출력
+    def ansi_to_html(self, text):
+        text = text.replace('<', '&lt;').replace('>', '&gt;')
+        text = re.sub(r'\033\[1;31m(.*?)\033\[0m', r'<span style="color:#FF5252; font-weight:bold;">\1</span>', text) # Red
+        text = re.sub(r'\033\[1;32m(.*?)\033\[0m', r'<span style="color:#69F0AE; font-weight:bold;">\1</span>', text) # Green
+        text = re.sub(r'\033\[1;33m(.*?)\033\[0m', r'<span style="color:#FFD740; font-weight:bold;">\1</span>', text) # Yellow
+        text = re.sub(r'\033\[1;34m(.*?)\033\[0m', r'<span style="color:#448AFF; font-weight:bold;">\1</span>', text) # Blue
+        text = re.sub(r'\033\[1;35m(.*?)\033\[0m', r'<span style="color:#E040FB; font-weight:bold;">\1</span>', text) # Magenta
+        text = re.sub(r'\033\[1;36m(.*?)\033\[0m', r'<span style="color:#18FFFF; font-weight:bold;">\1</span>', text) # Cyan
+        text = re.sub(r'\033\[1;37m(.*?)\033\[0m', r'<span style="color:#FFFFFF; font-weight:bold;">\1</span>', text) # White
+        text = re.sub(r'\033\[1;41m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#FF5252; font-weight:bold; padding:2px;">\1</span>', text) # Fatal BG
+        text = re.sub(r'\033\[[\d;]*m', '', text) # 남은 더미 ANSI 제거
+        return text
+
     def print_log(self, text, is_error=False):
-        color = "red" if is_error else "#00FF00"
         for line in text.splitlines():
             if not line.strip(): continue
-            self.log_viewer.append(f'<span style="color:{color};">{line}</span>')
+            if is_error:
+                clean_line = re.sub(r'\033\[[\d;]*m', '', line)
+                safe_line = clean_line.replace('<', '&lt;').replace('>', '&gt;')
+                self.log_viewer.append(f'<span style="color:#FF5252; font-weight:bold;">{safe_line}</span>')
+            else:
+                html_line = self.ansi_to_html(line)
+                self.log_viewer.append(html_line)
         self.log_viewer.moveCursor(QTextCursor.End)
 
     def record_run_db(self, run_str, run_type, desc):
@@ -335,14 +387,34 @@ class DAQControlCenter(QMainWindow):
         self.tabs.setEnabled(False); self.log_viewer.clear(); self.lcd_events.display(0)
         return True
 
+    # [핵심 개선] 매뉴얼 DAQ 타이머 및 이벤트 제어
+    def trigger_manual_timeout(self):
+        self.manual_timer.stop()
+        self.print_log("\033[1;36m[AUTO]\033[0m Manual DAQ target time reached. Graceful shutdown...", is_error=True)
+        self.daq_process.terminate()
+
     def start_manual_daq(self):
         if not self.pre_start_check(): return
         self.auto_mode = "NONE"; run_num = self.input_runnum.text().strip()
         self.lbl_dash_mode.setText(f"MANUAL [{run_num}]")
         self.record_run_db(run_num, self.input_runtype.text(), self.input_desc.text())
-        out_root = os.path.join(self.data_output_dir, f"run_{run_num}.root") # 변경된 경로 적용
-        self.print_log(f"[SYSTEM] Saving to: {out_root}")
-        self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), ["-f", self.combo_config.currentData(), "-o", out_root])
+        out_root = os.path.join(self.data_output_dir, f"run_{run_num}.root") 
+        
+        args = ["-f", self.combo_config.currentData(), "-o", out_root]
+        
+        if self.rb_manual_evt.isChecked():
+            val = self.spin_manual_val.value()
+            args.extend(["-n", str(val)])
+            self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ will stop after {val} events.")
+            self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
+        elif self.rb_manual_time.isChecked():
+            val = self.spin_manual_val.value()
+            self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ will stop after {val} seconds.")
+            self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
+            self.manual_timer.start(val * 1000)
+        else:
+            self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ running continuously. (Press FORCE STOP to end)")
+            self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
 
     def start_thr_scan(self):
         if not self.pre_start_check(): return
@@ -360,22 +432,22 @@ class DAQControlCenter(QMainWindow):
         run_str = f"{self.current_base_runnum}_THR{self.scan_current_val}"
         self.lbl_dash_mode.setText(f"SCAN [THR={self.scan_current_val}]")
         self.record_run_db(run_str, "SCAN", f"Auto Scan: THR={self.scan_current_val}")
-        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root") # 변경된 경로 적용
+        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root") 
         
         args = ["-f", cfg_path, "-o", out_root]
         val = self.spin_scan_val.value()
         if self.rb_scan_evt.isChecked():
             args.extend(["-n", str(val)])
-            self.print_log(f"\n[AUTO] Scan Step: THR={self.scan_current_val} ({val} Events)")
+            self.print_log(f"\n\033[1;36m[AUTO]\033[0m Scan Step: THR={self.scan_current_val} ({val} Events)")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
         else:
-            self.print_log(f"\n[AUTO] Scan Step: THR={self.scan_current_val} ({val} Sec timeout)")
+            self.print_log(f"\n\033[1;36m[AUTO]\033[0m Scan Step: THR={self.scan_current_val} ({val} Sec timeout)")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
             self.scan_timer.start(val * 1000)
 
     def trigger_scan_timeout(self):
         self.scan_timer.stop()
-        self.print_log(f"[AUTO] Scan time reached. Force saving...", is_error=True)
+        self.print_log("\033[1;36m[AUTO]\033[0m Scan time reached. Force saving...", is_error=True)
         self.daq_process.terminate()
 
     def start_subrun(self):
@@ -391,43 +463,54 @@ class DAQControlCenter(QMainWindow):
         run_str = f"{self.current_base_runnum}_part{self.current_subrun_idx:02d}"
         self.lbl_dash_mode.setText(f"LONG RUN [{self.current_subrun_idx}/{self.subrun_max_idx}]")
         self.record_run_db(run_str, "LONG_RUN", f"Chunk {self.current_subrun_idx}/{self.subrun_max_idx}")
-        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root") # 변경된 경로 적용
+        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root")
         
         args = ["-f", self.combo_config.currentData(), "-o", out_root]
         val = self.spin_chunk_val.value()
         if self.rb_long_evt.isChecked():
             args.extend(["-n", str(val)])
-            self.print_log(f"\n[AUTO] Long Run Chunk {self.current_subrun_idx} ({val} Events)...")
+            self.print_log(f"\n\033[1;36m[AUTO]\033[0m Long Run Chunk {self.current_subrun_idx} ({val} Events)...")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
         else:
-            self.print_log(f"\n[AUTO] Long Run Chunk {self.current_subrun_idx} ({val} Min timeout)...")
+            self.print_log(f"\n\033[1;36m[AUTO]\033[0m Long Run Chunk {self.current_subrun_idx} ({val} Min timeout)...")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
             self.subrun_timer.start(val * 60 * 1000)
 
     def trigger_subrun_rotation(self):
         self.subrun_timer.stop()
-        self.print_log(f"[AUTO] Chunk time reached. Rotating...", is_error=True)
+        self.print_log("\033[1;36m[AUTO]\033[0m Chunk time reached. Rotating...", is_error=True)
         self.daq_process.terminate() 
 
     def force_stop_daq(self):
-        self.auto_mode = "NONE"; self.scan_queue.clear(); self.subrun_timer.stop(); self.scan_timer.stop()
+        self.auto_mode = "NONE"; self.scan_queue.clear(); self.subrun_timer.stop(); self.scan_timer.stop(); self.manual_timer.stop()
         if self.daq_process.state() == QProcess.Running:
-            self.print_log("[SYSTEM] Force stopping DAQ gracefully...", is_error=True)
+            self.print_log("\033[1;31m[SYSTEM] Force stopping DAQ gracefully...\033[0m", is_error=True)
             self.daq_process.terminate()
         self.hv_panel.force_shutdown()
 
     def auto_finish(self):
         self.auto_mode = "NONE"; self.lbl_dash_mode.setText("IDLE"); self.tabs.setEnabled(True)
-        self.input_runnum.setText(self.get_next_run_number()) # 완료 후 런 번호 갱신
-        self.print_log("\n[SYSTEM] === Sequences Completed Successfully! ===")
+        self.input_runnum.setText(self.get_next_run_number()) 
+        self.print_log("\n\033[1;32m[SYSTEM]\033[0m === Sequences Completed Successfully! ===")
 
+    # [핵심 개선] 스팸 방지를 위해 Events 상태는 전용 라벨(lbl_hw_status)에만 덮어쓰기
     def handle_stdout(self):
         raw_data = self.daq_process.readAllStandardOutput().data().decode("utf8", errors="replace")
-        for line in raw_data.replace('\r', '\n').split('\n'):
-            if not line.strip(): continue
-            match_ev = re.search(r'Events:\s*(\d+)', line)
-            if match_ev: self.lcd_events.display(int(match_ev.group(1))); continue 
-            self.print_log(line)
+        for line in raw_data.split('\n'):
+            for subline in line.split('\r'): # \r 단위로 분리하여 줄 덮어쓰기 감지
+                if not subline.strip(): continue
+                
+                # C++에서 전송된 ANSI를 제거하여 정규식 매칭이 가능하도록 클렌징
+                clean_line = re.sub(r'\033\[[\d;]*m', '', subline)
+                match_ev = re.search(r'Events:\s*(\d+)', clean_line)
+                
+                if match_ev: 
+                    self.lcd_events.display(int(match_ev.group(1)))
+                    # 콘솔 도배 대신 전용 HW 상태 라벨을 HTML 컬러로 변환하여 깔끔하게 업데이트
+                    self.lbl_hw_status.setText(self.ansi_to_html(subline))
+                    continue 
+                
+                self.print_log(subline)
 
     def handle_stderr(self):
         self.print_log(self.daq_process.readAllStandardError().data().decode("utf8", errors="replace"), is_error=True)
@@ -437,6 +520,8 @@ class DAQControlCenter(QMainWindow):
             conn = sqlite3.connect(DB_NAME); cur = conn.cursor()
             cur.execute("UPDATE run_history SET status = 'COMPLETED' WHERE id = ?", (self.current_run_id,))
             conn.commit(); conn.close(); self.load_history()
+        
+        self.lbl_hw_status.setText("Hardware Status: Waiting for DAQ...")
         
         if self.auto_mode == "SCAN": QTimer.singleShot(1000, self.run_next_scan_step)
         elif self.auto_mode == "SUBRUN": self.current_subrun_idx += 1; QTimer.singleShot(1000, self.run_next_subrun)
