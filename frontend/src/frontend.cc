@@ -3,6 +3,7 @@
 #include <atomic>
 #include <thread>
 #include <unistd.h>
+#include <chrono> // [수정] 모니터 송신용 독립 타이머를 위한 헤더
 
 #include "TROOT.h"
 #include "TFile.h"
@@ -57,7 +58,9 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
 
     int nWrite = 0;
     RawData* popData = nullptr;
-    TStopwatch netTimer; netTimer.Start();
+    
+    // [수정] TStopwatch 간섭을 피하기 위한 절대 시간(chrono) 타이머 사용
+    auto lastNetTime = std::chrono::steady_clock::now();
 
     while (g_dataQueue.WaitAndPop(popData)) {
         if (popData) {
@@ -67,14 +70,13 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
             tree->Fill();
             nWrite++;
 
+            auto now = std::chrono::steady_clock::now();
             // TCP 버퍼 폭발 방지 (50ms마다 한 번만 소켓 송신)
-            if (socket && socket->IsValid() && netTimer.RealTime() > 0.05) {
+            if (socket && socket->IsValid() && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
                 TMessage mess(kMESS_OBJECT);
                 mess.WriteObject(treeEvtData);
                 socket->Send(mess);
-                netTimer.Start(); 
-            } else if (socket) {
-                netTimer.Continue();
+                lastNetTime = now;
             }
 
             // 다 쓴 객체는 힙에 반환하지 않고 Free Queue로 보내 재활용
@@ -128,7 +130,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // [수정 완료] 하드웨어 통신 및 파라미터 전송 로직 완벽 보강
+    // 하드웨어 통신 및 파라미터 전송 로직
     int nbd = runInfo->GetNFadcBD();
     for (int i = 0; i < nbd; i++) {
         FadcBD* bd = runInfo->GetFadcBD(i);
@@ -208,6 +210,8 @@ int main(int argc, char ** argv) {
 
     int nevt = 0;
     TStopwatch sw; sw.Start();
+    double lastTime = 0.0;
+    int lastEvt = 0;
 
     while (g_isRunning) {
         // OOM 방어: 큐가 비정상적으로 팽창하면 잠시 대기
@@ -266,16 +270,21 @@ int main(int argc, char ** argv) {
             else             fadc.NFADC400startL(runInfo->GetFadcBD(i)->MID());
         }
 
+        // [핵심] 실시간 Trigger Rate(Hz) 계산 및 출력
         if (nevt % (hevt * 4) == 0) {
-            // [수정] 상태 표시줄을 이모지와 색상을 활용해 서버 모니터링 툴처럼 꾸밉니다.
-            printf("\r\033[1;32m ⚡ Events: %-8d\033[0m | \033[1;33m⏱ Time: %-5.1f s\033[0m | \033[1;36m💾 DataQ: %-4zu\033[0m | \033[1;35m♻ Pool: %-4zu\033[0m", 
-                   nevt, sw.RealTime(), g_dataQueue.Size(), g_freeQueue.Size());
+            double curTime = sw.RealTime(); sw.Continue();
+            double dt = curTime - lastTime;
+            double rate = (dt > 0) ? (nevt - lastEvt) / dt : 0.0;
+            lastTime = curTime; lastEvt = nevt;
+            
+            printf("\r\033[1;32m ⚡ Events: %-8d\033[0m | \033[1;33m⏱ Time: %-5.1f s\033[0m | \033[1;35m🔥 Rate: %-6.1f Hz\033[0m | \033[1;36m💾 DataQ: %-4zu\033[0m | \033[1;35m♻ Pool: %-4zu\033[0m", 
+                   nevt, curTime, rate, g_dataQueue.Size(), g_freeQueue.Size());
             fflush(stdout);
-            sw.Continue();
         }
     }
 
     g_isRunning = false;
+    printf("\n"); // 줄바꿈 버그 픽스
     g_dataQueue.Stop(); 
     
     if (consumerTh.joinable()) {
@@ -291,7 +300,15 @@ int main(int argc, char ** argv) {
     delete runInfo;
     vme.VMEclose();
 
-    std::cout << std::endl;
+    // [핵심] 종료 시 완벽한 서머리(Summary) 출력
+    double totalTime = sw.RealTime();
+    double avgRate = (totalTime > 0) ? (nevt / totalTime) : 0.0;
+    std::cout << "\n\033[1;36m╔═══════════════════════ DAQ SUMMARY ═══════════════════════╗\033[0m" << std::endl;
+    std::cout << Form("\033[1;36m║\033[0m \033[1;33m%-20s\033[0m : \033[1;37m%-35d\033[0m \033[1;36m║\033[0m", "Total Events", nevt) << std::endl;
+    std::cout << Form("\033[1;36m║\033[0m \033[1;33m%-20s\033[0m : \033[1;37m%-35.2f sec\033[0m \033[1;36m║\033[0m", "Total Elapsed Time", totalTime) << std::endl;
+    std::cout << Form("\033[1;36m║\033[0m \033[1;33m%-20s\033[0m : \033[1;32m%-35.2f Hz\033[0m \033[1;36m║\033[0m", "Average Trigger Rate", avgRate) << std::endl;
+    std::cout << "\033[1;36m╚═══════════════════════════════════════════════════════════╝\033[0m\n" << std::endl;
+
     ELog::Print(ELog::INFO, "DAQ System gracefully stopped.");
     return 0;
 }

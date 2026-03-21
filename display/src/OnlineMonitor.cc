@@ -1,3 +1,4 @@
+#include <TGClient.h>
 #include "OnlineMonitor.hh"
 #include "RawData.hh"
 #include "RawChannel.hh"

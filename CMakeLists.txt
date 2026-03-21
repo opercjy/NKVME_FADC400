@@ -37,6 +37,8 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/gui/daq_gui.py
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/hv_control.py 
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/tlu_simulator.py
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/config_manager.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/gui/prod_manager.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/gui/elog_manager.py
      DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
      FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 

@@ -1,95 +1,110 @@
-```markdown
-# NoticeDAQ : Advanced VME FADC400 & DCS Control Framework
 
-![C++](https://img.shields.io/badge/C++-17-blue.svg)
-![ROOT](https://img.shields.io/badge/ROOT-6.00%2B-red.svg)
-![Python](https://img.shields.io/badge/Python-3.8%2B-yellow.svg)
-![PyQt5](https://img.shields.io/badge/PyQt5-GUI-brightgreen.svg)
+# 🚀 NKVME_FADC400 : NoticeDAQ Central Control (Ultimate Edition)
 
-NoticeDAQ는 **Notice Korea 6UVME 및 NFADC400 모듈**을 제어하기 위한 고성능 C++17 / ROOT 6 기반 데이터 획득(DAQ) 시스템이자, **CAEN 고전압 장비(HV)** 제어 및 자동화 시퀀서를 완벽하게 통합한 입자물리 실험실용 **All-in-One Slow Control System**입니다.
+**NKVME_FADC400**은 VME 기반 Notice FADC400 (400MHz, 2.5ns/sample) 보드를 제어하고 초고속으로 데이터를 수집, 모니터링, 오프라인 분석까지 수행할 수 있는 **통합 데이터 획득(DAQ) 및 분석 프레임워크**입니다. 
+
+C++ 기반의 고성능 멀티스레드 코어와 PyQt5 기반의 모던 대시보드 GUI가 결합되어, 실제 가속기 및 고에너지 물리 실험실 통제실(Control Room) 수준의 안정성과 편의성을 제공합니다.
 
 ---
 
-## 🌟 Key Features (주요 기능)
+## ✨ 핵심 기능 및 최신 업데이트 (Ultimate Edition)
 
-### 1. Zero Dead-Time DAQ Core (C++)
-- **Ping-Pong Multi-threading**: 하드웨어 하프 버퍼를 폴링하는 생산자(Producer) 스레드와 디스크/네트워크 I/O를 담당하는 소비자(Consumer) 스레드를 완벽히 분리하여 수집 데드타임(Dead-time)을 0으로 수렴시켰습니다.
-- **Absolute Memory Safety**: `TClonesArray`와 `ConstructedAt`을 활용한 **Object Pool** 아키텍처를 도입하여, 고속 수집 시 발생하는 메모리 파편화 및 힙(Heap) 누수를 원천 차단했습니다.
+### 1. 🖥️ Python PyQt5 모던 대시보드 (GUI)
+* **2계층(Nested) 탭 아키텍처:** 좁은 모니터 환경에서도 모든 기능(DAQ, HV, TLU, Config, Production)을 한눈에 제어할 수 있는 타이트한 레이아웃 적용.
+* **실시간 대시보드:** 수집된 이벤트 수, 진행 시간(Elapsed Time), **초당 트리거 처리율(Trigger Rate, Hz)**, 버퍼 큐(DataQ/Pool) 상태, 잔여 디스크 용량을 실시간으로 시각화.
+* **ANSI 컬러 콘솔 파싱:** C++ 코어에서 발생하는 시스템 로그, 경고, 에러(FATAL)의 이스케이프 컬러 코드를 HTML로 파싱하여 가독성 높은 시스템 콘솔 제공.
 
-### 2. Central Control Dashboard (PyQt5)
-- **Auto-Sequencer**: 문턱값(Threshold)을 자동으로 변경하며 스캔하는 **[THR Scan]** 기능과, 디스크 안전을 위해 지정된 시간(또는 이벤트) 단위로 파일을 자동 분할하는 **[Long Run Chunking]** 기능을 내장했습니다.
-- **Auto-Increment Run Number**: 이전 수집 기록을 분석하여 다음 Run 번호를 자동으로 추천하고 기입해 줍니다.
-- **E-Logbook**: 수집이 종료될 때마다 SQLite 데이터베이스(`daq_history.db`)에 메타데이터가 영구 기록되며, 대시보드에서 직접 코멘트를 수정하고 저장할 수 있습니다.
+### 2. ⚙️ C++ 고성능 DAQ 백엔드 (`frontend_nfadc400`)
+* **멀티스레딩 & 객체 풀링(Object Pool):** 생산자(하드웨어 읽기)와 소비자(디스크 쓰기/네트워크 전송) 스레드를 완벽히 분리하고, 메모리 재할당(new/delete) 없이 빈 객체를 재활용하여 램 파편화 및 병목 현상(OOM) 방지.
+* **하드웨어 방어 로직:** 보드 전원 꺼짐, 케이블 분리, 물리적 스위치(Module ID)와 소프트웨어 설정 불일치 시 즉각적인 FATAL 에러를 발생시켜 잘못된 메모리 접근 및 시스템 다운(Segmentation Fault) 원천 차단.
+* **독립 네트워크 타이머:** `<chrono>`를 이용한 독립 타이머로 50ms마다 온라인 모니터로 데이터를 브로드캐스팅하여 TStopwatch 충돌 및 TCP 버퍼 폭발 방지.
 
-### 3. Config & Path Manager
-- **Dynamic Routing**: 생성되는 대용량 데이터(`.root`)의 저장 경로를 외부 스토리지나 NAS 등 원하는 폴더로 실시간 변경할 수 있습니다.
-- **Built-in Editor**: 터미널을 열 필요 없이 GUI 내부에서 직접 하드웨어 파라미터 파일(`*.config`)을 수정하고 다른 이름으로 저장할 수 있습니다.
+### 3. 📦 오프라인 분석기 (`production_nfadc400`)
+* **물리적 데이터 환산 로직:** 페데스탈(Baseline) 자동 계산, 전압 강하(Voltage Drop) 펄스 반전, 적분 전하량(Charge) 및 400MHz 샘플링 속도에 맞춘 물리적 시간(2.5ns/sample) 매핑 적용.
+* **배치(Batch) 모드:** 원본 `.root` 파일을 읽어 전하합 히스토그램과 분석된 데이터를 포함한 `_prod.root` 파일을 고속으로 생성. (`-w` 옵션 시 물리 단위로 환산된 파형 시계열 전체를 `std::vector<double>`로 Tree에 추가 저장)
+* **인터랙티브 뷰어(-d 모드):** GUI 패널의 [Prev], [Next], [Jump] 버튼과 연동되어 개별 이벤트 파형과 분석 결과를 육안으로 검증 가능.
 
-### 4. Hardware DCS (Detector Control System)
-- **CAEN Integration**: `caen-libs` 패키지를 통해 CAEN SY4527 등 메인프레임과 통신하여, 장착된 보드와 채널을 자동으로 인식해 동적 제어 UI를 생성합니다. 전압 인가 및 실시간(VMon, IMon) 모니터링이 가능합니다.
-- **Analog Fallback Mode**: 아날로그 수동 장비 사용 시 체크박스를 해제하면 통신 폴링이 안전하게 차단되는 예외 처리(Fault-Tolerant)가 적용되어 있습니다.
-
-### 5. Educational TLU Simulator
-- **Trigger Logic Visualizer**: 초보 연구원을 위해 직관적인 ASCII 전자 회로도(Schematic Art)를 제공합니다. 드롭다운에서 원하는 동시계수(Coincidence) 물리 논리를 선택하면, FPGA 내부 진리표(Truth Table) 연산을 통해 설정 파일에 기입할 정확한 16진수 TLT 코드(ex: `0xFFFE`)를 자동으로 계산해 줍니다.
+### 4. 🗄️ E-Logbook 데이터베이스 (`elog_manager.py`)
+* SQLite3 기반의 전자 로그북(E-Logbook) 모듈 완벽 분리.
+* DAQ Run이 종료되는 즉시 C++ 코어의 서머리 데이터(총 이벤트, 소요 시간, 평균 처리율)를 파싱하여 데이터베이스에 영구 기록.
 
 ---
 
-## 📁 Project Structure
+## 📂 디렉토리 구조 (Directory Structure)
 
 ```text
-NoticeDAQ/
-├── bin/                  # 빌드된 C++ 실행 파일 및 배포된 Python GUI 스크립트
-├── config/               # DAQ 하드웨어 구동 파라미터 파일 (*.config)
-├── rules/                # Linux USB-VME 권한 설정 UDEV 룰
-│
-├── gui/                  # [Python] 통제실 GUI 및 모듈
-│   ├── daq_gui.py        # 메인 대시보드 및 자동화 시퀀서
-│   ├── hv_control.py     # CAEN 고전압 제어 및 모니터링 패널
-│   ├── tlu_simulator.py  # 트리거 논리 시뮬레이터 (회로도 시각화)
-│   └── config_manager.py # 설정 파일 에디터 및 데이터 저장 경로 관리자
-│
-├── objects/              # [C++] ROOT 직렬화 데이터 객체 (RawData, Pmt 등)
-├── frontend/             # [C++] DAQ 멀티스레드 코어 및 오프라인 분석기
-└── display/              # [C++] 실시간 논블로킹 파형 모니터 (OnlineMonitor)
+NKVME_FADC400/
+├── bin/                       # 빌드된 실행 파일 (.exe) 및 GUI 스크립트 복사본
+├── build/                     # CMake 빌드 디렉토리
+├── config/                    # DAQ 하드웨어 설정 파일 (*.config) 모음
+├── display/                   # 온라인 모니터링 (ROOT GUI) 소스 코드
+├── frontend/                  # C++ DAQ 백엔드 및 오프라인 분석(Production) 소스 코드
+├── gui/                       # PyQt5 기반 Python 대시보드 및 모듈
+│   ├── daq_gui.py             # 메인 대시보드 실행 파일
+│   ├── config_manager.py      # 설정 파일 관리 모듈
+│   ├── elog_manager.py        # SQLite3 E-Logbook DB 관리 모듈
+│   ├── prod_manager.py        # 오프라인 분석(Production) GUI 모듈
+│   ├── hv_control.py          # High Voltage 제어 모듈
+│   └── tlu_simulator.py       # Trigger Logic Unit 시뮬레이터 모듈
+├── nfadc400/                  # Notice FADC400 및 VME 통신 C/C++ 라이브러리 소스
+├── objects/                   # ROOT Dictionary 파싱을 위한 공통 데이터 클래스 (RawData, RunInfo 등)
+└── rules/                     # Linux udev 권한 설정 스크립트 (setup_usb.sh)
 ```
 
 ---
 
-## 🚀 Build & Run Guide
+## 🛠️ 설치 및 빌드 방법 (Build & Installation)
 
-### 1. 환경 설정 및 USB 권한 인가
-처음 1회에 한하여 USB-VME 통신 권한을 시스템에 등록하고, ROOT 및 라이브러리 경로를 불러옵니다.
+### 1. 필수 의존성 (Prerequisites)
+* **CERN ROOT 6** (C++11 이상 지원)
+* **Python 3.x** 및 **PyQt5** (`pip install PyQt5`)
+* **Notice FADC400 USB/VME 드라이버** 및 Linux 권한 (`libusb-1.0-0-dev`)
+
+### 2. 하드웨어 권한 설정 (최초 1회)
+USB-VME 컨트롤러에 일반 유저 권한으로 접근하기 위해 udev 룰을 적용합니다.
 ```bash
-cd rules
+cd rules/
 sudo ./setup_usb.sh
-cd ..
-source setup.sh
 ```
 
-### 2. 프로젝트 통합 빌드 (CMake)
-멀티 보드 확장을 대비하여 타겟명에 모델명(`_nfadc400`)이 붙습니다. 빌드 시 `gui/` 폴더의 파이썬 스크립트들이 자동으로 `bin/` 폴더로 복사되며 실행 권한이 부여됩니다.
+### 3. 컴파일 및 빌드 (CMake)
 ```bash
 mkdir build && cd build
-cmake .. 
+cmake ..
 make -j4
 ```
+> 빌드가 완료되면 `bin/` 폴더에 `frontend_nfadc400`, `OnlineMonitor_nfadc400`, `production_nfadc400` 및 Python GUI 파일들이 생성됩니다.
 
-### 3. 통합 통제실 GUI 가동 (추천)
-모든 조작(경로 설정, 데이터 수집, HV 제어, 런 기록)은 이 대시보드 하나에서 완벽하게 통제됩니다. 파이썬 가상환경(venv 등)이 있다면 활성화한 후 실행하십시오.
+---
+
+## 🚀 실행 방법 (Usage)
+
+### 1. 통합 대시보드 실행 (GUI 권장)
+모든 DAQ 수집, 모니터링, 분석 작업은 중앙 통제 대시보드에서 마우스 클릭만으로 수행할 수 있습니다.
 ```bash
-cd ..
-./bin/daq_gui.py
+cd bin/
+./daq_gui.py
 ```
+1. 탭에서 `[📊 Start Monitor]`를 클릭하여 온라인 뷰어를 먼저 엽니다.
+2. `[▶ Start Manual DAQ]`를 클릭하여 데이터 수집을 시작합니다.
+3. 수집이 끝나면 `[📦 Offline Production]` 탭으로 이동하여 분석을 수행합니다.
 
-### 4. 수동 CLI 모드 (옵션)
-GUI 없이 백그라운드 환경이나 bash 스크립트로 직접 구동할 경우 아래 명령어를 사용합니다.
+### 2. 수동 CLI 실행 모드
+GUI를 사용하지 않고 스크립트나 터미널에서 백엔드만 개별 실행할 수도 있습니다.
+
+**[데이터 수집 (Frontend)]**
 ```bash
-# 실시간 파형 모니터 백그라운드 띄우기
-./bin/OnlineMonitor_nfadc400 &
-
-# DAQ 백엔드 코어 수동 실행 (설정 파일, 출력 파일, 획득 이벤트 수 지정)
-./bin/frontend_nfadc400 -f ./config/ch1.config -o data/run_101.root -n 5000
+./bin/frontend_nfadc400 -f config/ch1.config -o data.root -n 5000
 ```
-
+**[온라인 모니터 (Display)]**
+```bash
+./bin/OnlineMonitor_nfadc400
 ```
+**[오프라인 분석 (Production)]**
+```bash
+# 배치 모드 (히스토그램 및 파형 전체(-w) 저장)
+./bin/production_nfadc400 -i data.root -w
 
+# 인터랙티브 뷰어 모드 (-d)
+./bin/production_nfadc400 -i data.root -d
+```
