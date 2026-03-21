@@ -63,9 +63,10 @@ Notice & License
 
 ```text
 NKVME_FADC400/
-├── bin/                       # 빌드된 C++ 실행 파일(.exe), .pcm 딕셔너리 및 GUI 런처
+├── bin/                       # 빌드된 C++ 실행 파일(.exe) 및 Python GUI 스크립트 모음
 ├── build/                     # CMake 빌드 디렉토리
 ├── config/                    # DAQ 하드웨어 설정 파일 (*.config) 모음
+├── lib/                       # 오프라인 분석용 공유 라이브러리(.so) 및 ROOT 딕셔너리(.pcm)
 │
 ├── gui/                       # [Python] 메인 통제 대시보드 및 서브 모듈
 │   ├── daq_gui.py             # 중앙 대시보드 (메인 런처). 프로세스 제어 및 UI 담당
@@ -92,7 +93,11 @@ NKVME_FADC400/
 │   ├── src/6uvme/             # USB-VME 브릿지 통신 라이브러리
 │   └── src/display/           # VME 상태창 (NoticeDISPLAY) 모듈
 │
-└── rules/                     # Linux 환경 USB 장치 권한 설정 스크립트 (setup_usb.sh)
+├── rules/                     # Linux 환경 USB 장치 권한 설정 스크립트 (setup_usb.sh)
+│
+├── setup.sh                   # 프로젝트 통합 환경 변수(ROOT, 라이브러리 경로 등) 셋업 스크립트
+├── offline_charge.cpp         # 오프라인 ROOT 매크로: 범용 전하량 스펙트럼 시각화 (Log-Y)
+└── offline_spe.cpp            # 오프라인 ROOT 매크로: PMT SPE(단일 광전자) Multi-Gaussian 교정
 ```
 
 -----
