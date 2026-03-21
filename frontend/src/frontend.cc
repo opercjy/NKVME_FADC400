@@ -44,10 +44,12 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
     tree->Branch("RawData", &treeEvtData);
 
     TSocket* socket = nullptr;
+    auto lastNetTime = std::chrono::steady_clock::now();
+    auto lastConnTry = std::chrono::steady_clock::now(); // [핵심] 재연결 타이머
+
     if (useDisplay) {
         socket = new TSocket("localhost", 9090);
         if (!socket->IsValid()) {
-            ELog::Print(ELog::WARNING, "Display Server offline. No network broadcast.");
             delete socket; socket = nullptr;
         } else {
             ELog::Print(ELog::INFO, "Connected to Display Server (localhost:9090)");
@@ -56,7 +58,6 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
 
     int nWrite = 0;
     RawData* popData = nullptr;
-    auto lastNetTime = std::chrono::steady_clock::now();
 
     while (g_dataQueue.WaitAndPop(popData)) {
         if (popData) {
@@ -67,11 +68,36 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
             nWrite++;
 
             auto now = std::chrono::steady_clock::now();
-            // 50ms마다 RawData 객체를 통째로 소켓 전송
+
+            // =====================================================================
+            // [핵심 픽스] 모니터 자동 재연결 (Auto-Reconnect) 로직
+            // 모니터가 중간에 꺼지거나 다시 켜지면 2초마다 감지하여 연결 복구
+            // =====================================================================
+            if (useDisplay && (!socket || !socket->IsValid())) {
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - lastConnTry).count() >= 2) {
+                    if (socket) { delete socket; socket = nullptr; }
+                    socket = new TSocket("localhost", 9090);
+                    if (socket->IsValid()) {
+                        ELog::Print(ELog::INFO, "Reconnected to Display Server!");
+                    } else {
+                        delete socket; socket = nullptr;
+                    }
+                    lastConnTry = now;
+                }
+            }
+
+            // 모니터로 데이터 전송
             if (socket && socket->IsValid() && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
                 TMessage mess(kMESS_OBJECT);
                 mess.WriteObject(treeEvtData);
-                socket->Send(mess);
+                int snd = socket->Send(mess);
+                
+                // [핵심 픽스] 전송 실패 시(모니터 창이 닫힘) 소켓 파기 및 다음 루프에서 재연결 유도
+                if (snd <= 0) { 
+                    socket->Close();
+                    delete socket;
+                    socket = nullptr;
+                }
                 lastNetTime = now;
             }
 
@@ -252,7 +278,6 @@ int main(int argc, char ** argv) {
             double rate = (dt > 0) ? (nevt - lastEvt) / dt : 0.0;
             lastTime = curTime; lastEvt = nevt;
             
-            // [롤백 완료] 박사님이 원하셨던 보라색 Pool이 포함된 원본 상태창 포맷
             printf("\r\033[1;32m ⚡ Events: %-8d\033[0m | \033[1;33m⏱ Time: %-5.1f s\033[0m | \033[1;35m🔥 Rate: %-6.1f Hz\033[0m | \033[1;36m💾 DataQ: %-4zu\033[0m | \033[1;35m♻ Pool: %-4zu\033[0m", 
                    nevt, curTime, rate, g_dataQueue.Size(), g_freeQueue.Size());
             fflush(stdout);

@@ -11,7 +11,8 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                              QGroupBox, QMessageBox, QTextEdit, QComboBox, 
-                             QLCDNumber, QProgressBar, QTabWidget, QSpinBox, QRadioButton, QButtonGroup)
+                             QLCDNumber, QProgressBar, QTabWidget, QSpinBox, 
+                             QRadioButton, QButtonGroup, QSplitter)
 from PyQt5.QtCore import QProcess, Qt, QRegExp, QTimer
 from PyQt5.QtGui import QRegExpValidator, QTextCursor, QFont
 
@@ -48,8 +49,6 @@ class DAQControlCenter(QMainWindow):
         self.daq_process.finished.connect(self.process_finished)
         
         self.monitor_process = QProcess(self)
-        
-        # [핵심] 이제 모니터의 로그도 대시보드 콘솔로 가로채옵니다!
         self.monitor_process.readyReadStandardOutput.connect(self.handle_mon_stdout)
         self.monitor_process.readyReadStandardError.connect(self.handle_mon_stderr)
 
@@ -84,8 +83,10 @@ class DAQControlCenter(QMainWindow):
         top_layout.addWidget(title_lbl); top_layout.addStretch(); top_layout.addWidget(self.clock_lbl)
         main_layout.addLayout(top_layout)
 
-        middle_layout = QHBoxLayout()
-        left_panel = QVBoxLayout()
+        self.middle_splitter = QSplitter(Qt.Horizontal)
+        
+        left_widget = QWidget()
+        left_panel = QVBoxLayout(left_widget)
         left_panel.setContentsMargins(0, 0, 5, 0)
         
         self.tabs = QTabWidget()
@@ -132,26 +133,37 @@ class DAQControlCenter(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_layout.setContentsMargins(5, 5, 5, 5)
         
-        self.btn_start_mon = QPushButton("📊 Start Monitor")
+        self.btn_start_mon = QPushButton("👁️ Show Monitor")
         self.btn_start_mon.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 8px;")
         self.btn_start_mon.clicked.connect(self.start_monitor)
         
-        self.btn_stop_mon = QPushButton("🛑 Stop Monitor")
+        self.btn_stop_mon = QPushButton("🙈 Hide Monitor")
         self.btn_stop_mon.setStyleSheet("background-color: #9E9E9E; color: white; font-weight: bold; padding: 8px;")
         self.btn_stop_mon.clicked.connect(self.stop_monitor)
         
+        # [신규] 대시보드 토글 버튼 추가
+        self.btn_toggle_dash = QPushButton("▶ Hide Dashboard")
+        self.btn_toggle_dash.setStyleSheet("background-color: #607D8B; color: white; font-weight: bold; padding: 8px;")
+        self.btn_toggle_dash.clicked.connect(self.toggle_dashboard)
+
         self.btn_stop = QPushButton("🛑 ABORT / STOP")
         self.btn_stop.setStyleSheet("background-color: #E53935; color: white; font-weight: bold; padding: 8px;")
         self.btn_stop.clicked.connect(self.force_stop_daq)
         
-        btn_layout.addWidget(self.btn_start_mon); btn_layout.addWidget(self.btn_stop_mon); btn_layout.addWidget(self.btn_stop)
-        btn_group.setLayout(btn_layout); left_panel.addWidget(btn_group); middle_layout.addLayout(left_panel, stretch=6)
+        btn_layout.addWidget(self.btn_start_mon)
+        btn_layout.addWidget(self.btn_stop_mon)
+        btn_layout.addWidget(self.btn_toggle_dash)  # 버튼 배치
+        btn_layout.addWidget(self.btn_stop)
+        btn_group.setLayout(btn_layout)
+        left_panel.addWidget(btn_group)
 
-        right_panel = QVBoxLayout()
+        # [핵심] 우측 위젯을 self 변수로 지정하여 토글 가능하게 함
+        self.right_widget = QWidget()
+        right_panel = QVBoxLayout(self.right_widget)
         right_panel.setContentsMargins(5, 0, 0, 0)
         
         dash_group = QGroupBox("Live Status Dashboard")
-        dash_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; }")
+        dash_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; background-color: #FAFAFA; }")
         dash_layout = QVBoxLayout()
         dash_layout.setContentsMargins(15, 15, 15, 15) 
         dash_layout.setSpacing(10) 
@@ -176,7 +188,16 @@ class DAQControlCenter(QMainWindow):
 
         dash_layout.addWidget(QLabel("Acquired Events:"))
         self.lcd_events = QLCDNumber(); self.lcd_events.setDigitCount(9)
-        self.lcd_events.setStyleSheet("background-color: black; color: #00FF00;"); self.lcd_events.setMinimumHeight(40) 
+        self.lcd_events.setSegmentStyle(QLCDNumber.Flat)
+        self.lcd_events.setStyleSheet("""
+            QLCDNumber {
+                background-color: #F0F4F8; 
+                color: #37474F; 
+                border: 2px solid #CFD8DC; 
+                border-radius: 6px;
+            }
+        """)
+        self.lcd_events.setMinimumHeight(45) 
         dash_layout.addWidget(self.lcd_events)
         
         dash_layout.addWidget(QLabel("Automation Progress:"))
@@ -188,11 +209,17 @@ class DAQControlCenter(QMainWindow):
         
         dash_layout.addWidget(QLabel("Current Config Summary:"))
         self.txt_config_summary = QTextEdit(); self.txt_config_summary.setReadOnly(True)
-        self.txt_config_summary.setStyleSheet("background-color: #E3F2FD; color: #3E2723; font-size: 11px;")
+        self.txt_config_summary.setStyleSheet("background-color: #FFFFFF; color: #3E2723; font-size: 11px; border: 1px solid #E0E0E0;")
         dash_layout.addWidget(self.txt_config_summary, stretch=1)
         
-        dash_group.setLayout(dash_layout); right_panel.addWidget(dash_group, stretch=4); middle_layout.addLayout(right_panel, stretch=4)
-        main_layout.addLayout(middle_layout)
+        dash_group.setLayout(dash_layout); right_panel.addWidget(dash_group, stretch=1)
+        
+        self.middle_splitter.addWidget(left_widget)
+        self.middle_splitter.addWidget(self.right_widget)
+        self.middle_splitter.setStretchFactor(0, 6)
+        self.middle_splitter.setStretchFactor(1, 4)
+        
+        main_layout.addWidget(self.middle_splitter, stretch=1)
 
         bottom_layout = QHBoxLayout()
         bottom_layout.setContentsMargins(0, 5, 0, 0)
@@ -210,6 +237,28 @@ class DAQControlCenter(QMainWindow):
         main_layout.addLayout(bottom_layout, stretch=2) 
         self.refresh_configs()
         self.input_runnum.setText(self.elog_panel.get_next_run_number())
+
+# --- [수정된 부분] 대시보드 토글(숨김/보기) 함수 ---
+    def toggle_dashboard(self):
+        if self.right_widget.isVisible():
+            # 1. 우측 대시보드 숨기기
+            self.right_widget.hide()
+            self.btn_toggle_dash.setText("◀ Show Dashboard")
+            self.btn_toggle_dash.setStyleSheet("background-color: #455A64; color: white; font-weight: bold; padding: 8px;")
+            
+            # [핵심] 리눅스 환경에서 창 크기를 강제로 줄이기 위한 동적 리사이징
+            self.setMinimumWidth(600)           # 최소 가로폭 제한을 600으로 해제
+            self.resize(600, self.height())     # 창 전체 가로 크기를 600으로 강제 축소
+        else:
+            # 1. 우측 대시보드 다시 켜기
+            self.right_widget.show()
+            self.btn_toggle_dash.setText("▶ Hide Dashboard")
+            self.btn_toggle_dash.setStyleSheet("background-color: #607D8B; color: white; font-weight: bold; padding: 8px;")
+            
+            # [핵심] 대시보드가 표시될 수 있도록 창 크기를 다시 넓게 복구
+            self.setMinimumWidth(1250)          # 최소 가로폭 제한을 1250으로 복구
+            self.resize(1250, self.height())    # 창 전체 가로 크기를 1250으로 강제 확장
+    # ------------------------------------------------
 
     def update_data_dir(self, new_dir):
         self.data_output_dir = new_dir
@@ -316,7 +365,7 @@ class DAQControlCenter(QMainWindow):
     def stop_monitor(self):
         if self.monitor_process.state() == QProcess.Running:
             self.monitor_process.terminate()
-            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display stopped.")
+            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display hidden/stopped.")
 
     def update_clock(self):
         self.clock_lbl.setText(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -362,7 +411,6 @@ class DAQControlCenter(QMainWindow):
                 self.log_viewer.append(html_line)
         self.log_viewer.moveCursor(QTextCursor.End)
 
-    # [핵심] 모니터 로그 가로채기
     def handle_mon_stdout(self):
         raw_data = self.monitor_process.readAllStandardOutput().data().decode("utf8", errors="replace")
         for line in raw_data.split('\n'):
