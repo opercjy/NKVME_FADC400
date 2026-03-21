@@ -4,10 +4,9 @@
 import sys
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QLineEdit, QGroupBox, QSpinBox, QGridLayout, 
-                             QMessageBox, QCheckBox, QScrollArea)
+                             QMessageBox, QCheckBox, QScrollArea, QComboBox)
 from PyQt5.QtCore import QTimer, pyqtSignal, Qt
 
-# CAEN 공식 라이브러리 임포트 시도
 try:
     from caen_libs import caenhvwrapper as hv
     HAS_CAEN_LIBS = True
@@ -20,10 +19,10 @@ class HVControlPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.device = None
+        self.crate_map = []
         self.hw_timer = QTimer(self)
         self.hw_timer.timeout.connect(self.update_dashboard)
         
-        # 동적 UI 위젯들을 저장할 딕셔너리 {(slot, ch): widget}
         self.spin_v0 = {}
         self.spin_i0 = {}
         self.btn_pw = {}
@@ -68,6 +67,15 @@ class HVControlPanel(QWidget):
             warn.setStyleSheet("color: red; font-weight: bold;")
             caen_layout.addWidget(warn)
 
+        # --- 슬롯 선택(콤보박스) 부 ---
+        slot_layout = QHBoxLayout()
+        self.combo_slot = QComboBox()
+        self.combo_slot.setStyleSheet("font-weight: bold; padding: 5px;")
+        self.combo_slot.currentIndexChanged.connect(self.on_slot_changed)
+        slot_layout.addWidget(QLabel("<b>📍 Target Slot:</b>"))
+        slot_layout.addWidget(self.combo_slot, stretch=1)
+        caen_layout.addLayout(slot_layout)
+
         # --- 동적 채널 패널 (스크롤 영역) ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -84,106 +92,129 @@ class HVControlPanel(QWidget):
         if not checked and self.device is not None:
             self.toggle_caen() 
 
-    def clear_dynamic_ui(self):
-        for i in reversed(range(self.grid_channels.count())): 
-            self.grid_channels.itemAt(i).widget().setParent(None)
-        self.spin_v0.clear(); self.spin_i0.clear(); self.btn_pw.clear()
-        self.lbl_vmon.clear(); self.lbl_imon.clear(); self.lbl_stat.clear()
-
-    def build_dynamic_ui(self):
-        """연결된 보드와 채널을 읽어와서 동적으로 UI를 구성합니다."""
-        self.clear_dynamic_ui()
-        headers = ["Slot.Ch (Name)", "V0Set (V)", "I0Set (uA)", "Apply", "Power", "VMon (V)", "IMon (uA)", "Status"]
-        for col, h in enumerate(headers):
-            self.grid_channels.addWidget(QLabel(f"<b>{h}</b>"), 0, col)
-
-        slots = self.device.get_crate_map()
-        row = 1
-        for board in slots:
-            if board is None: continue
-            
-            # 채널 이름 한 번에 가져오기
-            ch_list = list(range(board.n_channel))
-            ch_names = self.device.get_ch_name(board.slot, ch_list)
-
-            for ch in ch_list:
-                name = ch_names[ch] if ch_names[ch] else f"Ch{ch}"
-                self.grid_channels.addWidget(QLabel(f"<b>S{board.slot}.{ch}</b> ({name})"), row, 0)
-                
-                sp_v = QSpinBox(); sp_v.setRange(0, 4000)
-                self.spin_v0[(board.slot, ch)] = sp_v
-                self.grid_channels.addWidget(sp_v, row, 1)
-
-                sp_i = QSpinBox(); sp_i.setRange(0, 5000)
-                self.spin_i0[(board.slot, ch)] = sp_i
-                self.grid_channels.addWidget(sp_i, row, 2)
-
-                btn_set = QPushButton("Set")
-                btn_set.clicked.connect(lambda _, s=board.slot, c=ch: self.set_channel_params(s, c))
-                self.grid_channels.addWidget(btn_set, row, 3)
-
-                btn_pw = QPushButton("ON")
-                btn_pw.setStyleSheet("background-color: #4CAF50; color: white;")
-                btn_pw.clicked.connect(lambda _, s=board.slot, c=ch: self.toggle_power(s, c))
-                self.btn_pw[(board.slot, ch)] = btn_pw
-                self.grid_channels.addWidget(btn_pw, row, 4)
-
-                lbl_v = QLabel("0.0"); lbl_v.setStyleSheet("font-family: monospace; font-weight: bold;")
-                self.lbl_vmon[(board.slot, ch)] = lbl_v
-                self.grid_channels.addWidget(lbl_v, row, 5)
-
-                lbl_i = QLabel("0.00"); lbl_i.setStyleSheet("font-family: monospace;")
-                self.lbl_imon[(board.slot, ch)] = lbl_i
-                self.grid_channels.addWidget(lbl_i, row, 6)
-
-                lbl_s = QLabel("OFF"); lbl_s.setStyleSheet("color:red; font-weight:bold;")
-                self.lbl_stat[(board.slot, ch)] = lbl_s
-                self.grid_channels.addWidget(lbl_s, row, 7)
-                
-                row += 1
-                
-        # 초기 설정값 불러오기
-        self.sync_initial_settings(slots)
-
-    def sync_initial_settings(self, slots):
-        try:
-            for board in slots:
-                if board is None: continue
-                ch_list = list(range(board.n_channel))
-                vsets = self.device.get_ch_param(board.slot, ch_list, "V0Set")
-                isets = self.device.get_ch_param(board.slot, ch_list, "I0Set")
-                pwrs  = self.device.get_ch_param(board.slot, ch_list, "Pw")
-                
-                for i, ch in enumerate(ch_list):
-                    self.spin_v0[(board.slot, ch)].setValue(int(vsets[i]))
-                    self.spin_i0[(board.slot, ch)].setValue(int(isets[i]))
-                    if pwrs[i]:
-                        self.btn_pw[(board.slot, ch)].setText("OFF")
-                        self.btn_pw[(board.slot, ch)].setStyleSheet("background-color: #F44336; color: white;")
-        except Exception as e:
-            self.sig_log.emit(f"[HV] Sync Error: {e}", True)
-
     def toggle_caen(self):
         if not HAS_CAEN_LIBS: return
         if self.device is None:
             try:
                 ip = self.input_ip.text().strip()
                 self.device = hv.Device.open(hv.SystemType.SY4527, hv.LinkType.TCPIP, ip, "admin", "admin")
-                self.build_dynamic_ui()
+                
+                # 크레이트 맵 스캔 후 콤보박스 세팅
+                self.crate_map = self.device.get_crate_map()
+                self.combo_slot.blockSignals(True)
+                self.combo_slot.clear()
+                
+                for board in self.crate_map:
+                    if board is not None:
+                        self.combo_slot.addItem(f"Slot {board.slot} ({board.n_channel} Channels)", board.slot)
+                
+                self.combo_slot.blockSignals(False)
+
+                if self.combo_slot.count() > 0:
+                    self.on_slot_changed() 
+                else:
+                    self.sig_log.emit("[CAEN] Connected, but no boards found in crate.", True)
+
                 self.btn_conn.setText("Disconnect")
                 self.btn_conn.setStyleSheet("background-color: #F44336; color: white; font-weight:bold;")
                 self.sig_log.emit(f"[CAEN] Connected to {ip} & Crate mapped.", False)
-                self.hw_timer.start(1500) # 1.5초 폴링 (부하 방지)
+                
+                # 1.5초 폴링 (현재 보이는 슬롯만 폴링)
+                self.hw_timer.start(1500) 
             except Exception as e:
                 QMessageBox.critical(self, "Connection Error", str(e))
         else:
             self.hw_timer.stop()
             self.device.close()
             self.device = None
+            self.crate_map = []
+            self.combo_slot.clear()
             self.btn_conn.setText("Connect CAEN (Auto-Scan)")
             self.btn_conn.setStyleSheet("background-color: #3F51B5; color: white; font-weight:bold;")
             self.clear_dynamic_ui()
             self.sig_log.emit("[CAEN] Disconnected.", False)
+
+    def clear_dynamic_ui(self):
+        for i in reversed(range(self.grid_channels.count())): 
+            widget = self.grid_channels.itemAt(i).widget()
+            if widget: widget.setParent(None)
+        self.spin_v0.clear(); self.spin_i0.clear(); self.btn_pw.clear()
+        self.lbl_vmon.clear(); self.lbl_imon.clear(); self.lbl_stat.clear()
+
+    def on_slot_changed(self):
+        if not self.device or self.combo_slot.currentIndex() < 0: return
+        target_slot = self.combo_slot.currentData()
+        
+        board = next((b for b in self.crate_map if b and b.slot == target_slot), None)
+        if board:
+            self.build_dynamic_ui(board)
+
+    def build_dynamic_ui(self, board):
+        self.clear_dynamic_ui()
+        headers = ["Channel (Name)", "V0Set (V)", "I0Set (uA)", "Apply", "Power", "VMon (V)", "IMon (uA)", "Status"]
+        for col, h in enumerate(headers):
+            self.grid_channels.addWidget(QLabel(f"<b>{h}</b>"), 0, col)
+
+        ch_list = list(range(board.n_channel))
+        try:
+            ch_names = self.device.get_ch_name(board.slot, ch_list)
+        except Exception:
+            ch_names = [f"Ch{c}" for c in ch_list]
+
+        row = 1
+        for ch in ch_list:
+            name = ch_names[ch] if ch_names[ch] else f"Ch{ch}"
+            self.grid_channels.addWidget(QLabel(f"<b>{ch}</b> ({name})"), row, 0)
+            
+            sp_v = QSpinBox(); sp_v.setRange(0, 4000)
+            self.spin_v0[(board.slot, ch)] = sp_v
+            self.grid_channels.addWidget(sp_v, row, 1)
+
+            sp_i = QSpinBox(); sp_i.setRange(0, 5000)
+            self.spin_i0[(board.slot, ch)] = sp_i
+            self.grid_channels.addWidget(sp_i, row, 2)
+
+            btn_set = QPushButton("Set")
+            btn_set.clicked.connect(lambda _, s=board.slot, c=ch: self.set_channel_params(s, c))
+            self.grid_channels.addWidget(btn_set, row, 3)
+
+            btn_pw = QPushButton("ON")
+            btn_pw.setStyleSheet("background-color: #4CAF50; color: white;")
+            btn_pw.clicked.connect(lambda _, s=board.slot, c=ch: self.toggle_power(s, c))
+            self.btn_pw[(board.slot, ch)] = btn_pw
+            self.grid_channels.addWidget(btn_pw, row, 4)
+
+            lbl_v = QLabel("0.0"); lbl_v.setStyleSheet("font-family: monospace; font-weight: bold;")
+            self.lbl_vmon[(board.slot, ch)] = lbl_v
+            self.grid_channels.addWidget(lbl_v, row, 5)
+
+            lbl_i = QLabel("0.00"); lbl_i.setStyleSheet("font-family: monospace;")
+            self.lbl_imon[(board.slot, ch)] = lbl_i
+            self.grid_channels.addWidget(lbl_i, row, 6)
+
+            lbl_s = QLabel("OFF"); lbl_s.setStyleSheet("color:red; font-weight:bold;")
+            self.lbl_stat[(board.slot, ch)] = lbl_s
+            self.grid_channels.addWidget(lbl_s, row, 7)
+            
+            row += 1
+            
+        self.sync_initial_settings(board)
+
+    def sync_initial_settings(self, board):
+        try:
+            ch_list = list(range(board.n_channel))
+            vsets = self.device.get_ch_param(board.slot, ch_list, "V0Set")
+            isets = self.device.get_ch_param(board.slot, ch_list, "I0Set")
+            pwrs  = self.device.get_ch_param(board.slot, ch_list, "Pw")
+            
+            for i, ch in enumerate(ch_list):
+                self.spin_v0[(board.slot, ch)].setValue(int(vsets[i]))
+                self.spin_i0[(board.slot, ch)].setValue(int(isets[i]))
+                if pwrs[i]:
+                    self.btn_pw[(board.slot, ch)].setText("OFF")
+                    self.btn_pw[(board.slot, ch)].setStyleSheet("background-color: #F44336; color: white;")
+        except Exception as e:
+            self.sig_log.emit(f"[HV] Sync Error: {e}", True)
 
     def set_channel_params(self, slot, ch):
         if not self.device: return
@@ -212,17 +243,20 @@ class HVControlPanel(QWidget):
             self.sig_log.emit(f"[HV] Power Toggle Error: {e}", True)
 
     def update_dashboard(self):
-        if not self.device: return
+        if not self.device or self.combo_slot.currentIndex() < 0: return
+        target_slot = self.combo_slot.currentData()
+
         try:
-            slots = self.device.get_crate_map()
-            for board in slots:
-                if board is None: continue
-                ch_list = list(range(board.n_channel))
-                vmons = self.device.get_ch_param(board.slot, ch_list, "VMon")
-                imons = self.device.get_ch_param(board.slot, ch_list, "IMon")
-                pwrs  = self.device.get_ch_param(board.slot, ch_list, "Pw")
-                
-                for i, ch in enumerate(ch_list):
+            board = next((b for b in self.crate_map if b and b.slot == target_slot), None)
+            if not board: return
+
+            ch_list = list(range(board.n_channel))
+            vmons = self.device.get_ch_param(board.slot, ch_list, "VMon")
+            imons = self.device.get_ch_param(board.slot, ch_list, "IMon")
+            pwrs  = self.device.get_ch_param(board.slot, ch_list, "Pw")
+            
+            for i, ch in enumerate(ch_list):
+                if (board.slot, ch) in self.lbl_vmon: 
                     self.lbl_vmon[(board.slot, ch)].setText(f"{vmons[i]:.1f}")
                     self.lbl_imon[(board.slot, ch)].setText(f"{imons[i]:.2f}")
                     if pwrs[i]:
@@ -232,13 +266,13 @@ class HVControlPanel(QWidget):
                         self.lbl_stat[(board.slot, ch)].setText("OFF")
                         self.lbl_stat[(board.slot, ch)].setStyleSheet("color: red; font-weight: bold;")
         except Exception:
-            pass # 일시적인 통신 끊김 무시
+            pass 
 
     def force_shutdown(self):
+        # 긴급 셧다운 시에는 슬롯 상관없이 모든 보드 강제 OFF
         if self.cb_enable_scm.isChecked() and self.device:
             self.sig_log.emit("[CAEN] EMERGENCY SHUTDOWN applied.", True)
-            slots = self.device.get_crate_map()
-            for board in slots:
+            for board in self.crate_map:
                 if board is None: continue
                 ch_list = list(range(board.n_channel))
-                self.device.set_ch_param(board.slot, ch_list, "Pw", 0) # 0 전달로 모두 강제 OFF
+                self.device.set_ch_param(board.slot, ch_list, "Pw", 0)

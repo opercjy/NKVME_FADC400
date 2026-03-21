@@ -141,7 +141,6 @@ class DAQControlCenter(QMainWindow):
         self.btn_stop_mon.setStyleSheet("background-color: #9E9E9E; color: white; font-weight: bold; padding: 8px;")
         self.btn_stop_mon.clicked.connect(self.stop_monitor)
         
-        # [신규] 대시보드 토글 버튼 추가
         self.btn_toggle_dash = QPushButton("▶ Hide Dashboard")
         self.btn_toggle_dash.setStyleSheet("background-color: #607D8B; color: white; font-weight: bold; padding: 8px;")
         self.btn_toggle_dash.clicked.connect(self.toggle_dashboard)
@@ -152,20 +151,25 @@ class DAQControlCenter(QMainWindow):
         
         btn_layout.addWidget(self.btn_start_mon)
         btn_layout.addWidget(self.btn_stop_mon)
-        btn_layout.addWidget(self.btn_toggle_dash)  # 버튼 배치
+        btn_layout.addWidget(self.btn_toggle_dash)
         btn_layout.addWidget(self.btn_stop)
         btn_group.setLayout(btn_layout)
         left_panel.addWidget(btn_group)
 
-        # [핵심] 우측 위젯을 self 변수로 지정하여 토글 가능하게 함
         self.right_widget = QWidget()
         right_panel = QVBoxLayout(self.right_widget)
-        right_panel.setContentsMargins(5, 0, 0, 0)
+        # [수정] 우측 테두리 잘림을 방지하기 위해 마진을 넉넉히 줍니다.
+        right_panel.setContentsMargins(5, 5, 5, 5)
         
         dash_group = QGroupBox("Live Status Dashboard")
-        dash_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; background-color: #FAFAFA; }")
+        # [수정] margin-top을 줘서 타이틀 글자가 테두리와 겹치지 않게 합니다.
+        dash_group.setStyleSheet("""
+            QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; background-color: #FAFAFA; border-radius: 8px; margin-top: 20px; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; padding: 0 5px; color: #424242; }
+        """)
         dash_layout = QVBoxLayout()
-        dash_layout.setContentsMargins(15, 15, 15, 15) 
+        # [수정] 내부 마진의 상단(top) 여백을 충분히 주어 글자와 겹치지 않게 합니다.
+        dash_layout.setContentsMargins(15, 25, 15, 15) 
         dash_layout.setSpacing(10) 
         
         self.lbl_dash_mode = QLabel("IDLE")
@@ -216,55 +220,66 @@ class DAQControlCenter(QMainWindow):
         
         self.middle_splitter.addWidget(left_widget)
         self.middle_splitter.addWidget(self.right_widget)
-        self.middle_splitter.setStretchFactor(0, 6)
-        self.middle_splitter.setStretchFactor(1, 4)
+        # [수정] 대시보드 창 크기를 약간 줄입니다 (7:3 비율)
+        self.middle_splitter.setStretchFactor(0, 7)
+        self.middle_splitter.setStretchFactor(1, 3)
         
         main_layout.addWidget(self.middle_splitter, stretch=1)
 
         bottom_layout = QHBoxLayout()
         bottom_layout.setContentsMargins(0, 5, 0, 0)
         
-        log_group = QGroupBox("System Console"); log_layout = QVBoxLayout(); log_layout.setContentsMargins(5, 5, 5, 5)
+        log_group = QGroupBox("System Console")
+        # [수정] 콘솔 그룹박스 CSS 타이틀 겹침 방지 처리
+        log_group.setStyleSheet("""
+            QGroupBox { font-weight: bold; border: 2px solid #B0BEC5; border-radius: 8px; margin-top: 20px; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; padding: 0 5px; color: #455A64; }
+        """)
+        log_layout = QVBoxLayout()
+        # [수정] Top 마진을 25로 늘려서 하드웨어 상태 라벨이 테두리에 가려지지 않게 함
+        log_layout.setContentsMargins(15, 25, 15, 15) 
+        
         self.lbl_hw_status = QLabel("Hardware Status: Waiting for DAQ...")
         self.lbl_hw_status.setFont(QFont("Consolas", 12, QFont.Bold))
-        self.lbl_hw_status.setStyleSheet("background-color: #1A1A1A; color: #FFD740; padding: 4px; border-radius: 4px;")
+        self.lbl_hw_status.setStyleSheet("background-color: #ECEFF1; color: #E65100; padding: 5px; border-radius: 4px; border: 1px solid #CFD8DC;")
         log_layout.addWidget(self.lbl_hw_status)
 
         self.log_viewer = QTextEdit(); self.log_viewer.setReadOnly(True)
-        self.log_viewer.setStyleSheet("background-color: #121212; color: #E0E0E0; font-family: 'Consolas', 'Segoe UI Emoji', 'Apple Color Emoji', monospace; font-size: 12px;")
+        self.log_viewer.setStyleSheet("""
+            QTextEdit {
+                background-color: #F8F9FA; 
+                color: #263238; 
+                font-family: 'Consolas', monospace; 
+                font-size: 12px; 
+                border: 1px solid #CFD8DC;
+            }
+        """)
         log_layout.addWidget(self.log_viewer); log_group.setLayout(log_layout); bottom_layout.addWidget(log_group)
         
         main_layout.addLayout(bottom_layout, stretch=2) 
         self.refresh_configs()
         self.input_runnum.setText(self.elog_panel.get_next_run_number())
 
-# --- [수정된 부분] 대시보드 토글(숨김/보기) 함수 ---
     def toggle_dashboard(self):
         if self.right_widget.isVisible():
-            # 1. 우측 대시보드 숨기기
             self.right_widget.hide()
             self.btn_toggle_dash.setText("◀ Show Dashboard")
             self.btn_toggle_dash.setStyleSheet("background-color: #455A64; color: white; font-weight: bold; padding: 8px;")
-            
-            # [핵심] 리눅스 환경에서 창 크기를 강제로 줄이기 위한 동적 리사이징
-            self.setMinimumWidth(600)           # 최소 가로폭 제한을 600으로 해제
-            self.resize(600, self.height())     # 창 전체 가로 크기를 600으로 강제 축소
+            self.setMinimumWidth(700) # 좌측 탭이 안 찌그러질 정도의 안전 마진
+            self.resize(700, self.height())     
         else:
-            # 1. 우측 대시보드 다시 켜기
             self.right_widget.show()
             self.btn_toggle_dash.setText("▶ Hide Dashboard")
             self.btn_toggle_dash.setStyleSheet("background-color: #607D8B; color: white; font-weight: bold; padding: 8px;")
-            
-            # [핵심] 대시보드가 표시될 수 있도록 창 크기를 다시 넓게 복구
-            self.setMinimumWidth(1250)          # 최소 가로폭 제한을 1250으로 복구
-            self.resize(1250, self.height())    # 창 전체 가로 크기를 1250으로 강제 확장
-    # ------------------------------------------------
+            self.setMinimumWidth(1250)          
+            self.resize(1250, self.height())    
 
     def update_data_dir(self, new_dir):
         self.data_output_dir = new_dir
         self.print_log(f"\033[1;36m[SYSTEM]\033[0m Data output directory changed to: {self.data_output_dir}")
 
     def init_daq_tabs(self):
+        # [1] Manual DAQ
         tab_manual = QWidget(); manual_layout = QVBoxLayout(tab_manual)
         manual_layout.setContentsMargins(8, 8, 8, 8); manual_layout.setSpacing(8)
         
@@ -294,7 +309,7 @@ class DAQControlCenter(QMainWindow):
         stop_group = QGroupBox("Stop Condition")
         stop_layout = QHBoxLayout(); stop_layout.setContentsMargins(5, 10, 5, 5)
         self.bg_manual = QButtonGroup()
-        self.rb_manual_cont = QRadioButton("Continuous (수동 정지)"); self.rb_manual_evt = QRadioButton("By Events"); self.rb_manual_time = QRadioButton("By Time (Sec)")
+        self.rb_manual_cont = QRadioButton("Continuous"); self.rb_manual_evt = QRadioButton("By Events"); self.rb_manual_time = QRadioButton("By Time (Sec)")
         self.rb_manual_cont.setChecked(True)
         self.bg_manual.addButton(self.rb_manual_cont); self.bg_manual.addButton(self.rb_manual_evt); self.bg_manual.addButton(self.rb_manual_time)
         self.spin_manual_val = QSpinBox(); self.spin_manual_val.setRange(1, 10000000); self.spin_manual_val.setValue(5000); self.spin_manual_val.setEnabled(False)
@@ -307,35 +322,65 @@ class DAQControlCenter(QMainWindow):
         btn_m.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; font-weight:bold; font-size: 13px;")
         btn_m.clicked.connect(self.start_manual_daq); manual_layout.addWidget(btn_m); manual_layout.addStretch()
         
+        # [2] THR Scan
         tab_scan = QWidget(); scan_layout = QVBoxLayout(tab_scan)
         scan_layout.setContentsMargins(8, 8, 8, 8); scan_layout.setSpacing(6)
         scan_layout.addWidget(QLabel("자동으로 Threshold(THR) 값을 변경하며 스캔합니다."))
+        
         row2 = QHBoxLayout()
         self.spin_thr_start = QSpinBox(); self.spin_thr_start.setRange(0, 1000); self.spin_thr_start.setValue(50)
         self.spin_thr_end = QSpinBox(); self.spin_thr_end.setRange(0, 1000); self.spin_thr_end.setValue(200)
         self.spin_thr_step = QSpinBox(); self.spin_thr_step.setRange(1, 500); self.spin_thr_step.setValue(10)
-        row2.addWidget(QLabel("Start:")); row2.addWidget(self.spin_thr_start); row2.addWidget(QLabel("End:")); row2.addWidget(self.spin_thr_end); row2.addWidget(QLabel("Step:")); row2.addWidget(self.spin_thr_step); scan_layout.addLayout(row2)
+        row2.addWidget(QLabel("Start:")); row2.addWidget(self.spin_thr_start)
+        row2.addWidget(QLabel("End:")); row2.addWidget(self.spin_thr_end)
+        row2.addWidget(QLabel("Step:")); row2.addWidget(self.spin_thr_step)
+        scan_layout.addLayout(row2)
+        
         self.bg_scan = QButtonGroup()
         self.rb_scan_evt = QRadioButton("By Events"); self.rb_scan_time = QRadioButton("By Time (Sec)"); self.rb_scan_evt.setChecked(True)
         self.bg_scan.addButton(self.rb_scan_evt); self.bg_scan.addButton(self.rb_scan_time)
-        row_scan_opt = QHBoxLayout(); row_scan_opt.addWidget(self.rb_scan_evt); row_scan_opt.addWidget(self.rb_scan_time)
+        
+        row_scan_opt = QHBoxLayout()
+        row_scan_opt.addWidget(self.rb_scan_evt); row_scan_opt.addWidget(self.rb_scan_time)
         self.spin_scan_val = QSpinBox(); self.spin_scan_val.setRange(1, 10000000); self.spin_scan_val.setValue(5000)
-        row_scan_opt.addWidget(self.spin_scan_val); scan_layout.addLayout(row_scan_opt)
+        row_scan_opt.addWidget(self.spin_scan_val)
+        
+        row_scan_opt.addWidget(QLabel("Idle(s):"))
+        self.spin_scan_rest = QSpinBox()
+        self.spin_scan_rest.setRange(0, 3600) 
+        self.spin_scan_rest.setValue(3)       
+        row_scan_opt.addWidget(self.spin_scan_rest)
+        
+        scan_layout.addLayout(row_scan_opt)
+        
         btn_s = QPushButton("🔄 Start Threshold Scan")
         btn_s.setStyleSheet("background-color: #FF9800; color: white; padding: 10px; font-weight:bold;")
         btn_s.clicked.connect(self.start_thr_scan); scan_layout.addWidget(btn_s); scan_layout.addStretch()
 
+        # [3] Long Run
         tab_subrun = QWidget(); subrun_layout = QVBoxLayout(tab_subrun)
         subrun_layout.setContentsMargins(8, 8, 8, 8); subrun_layout.setSpacing(6)
         subrun_layout.addWidget(QLabel("지정된 조건(시간/이벤트) 단위로 파일을 분할 수집합니다."))
+        
         self.bg_long = QButtonGroup()
         self.rb_long_time = QRadioButton("Chunk by Time (Min)"); self.rb_long_evt = QRadioButton("Chunk by Events"); self.rb_long_time.setChecked(True)
         self.bg_long.addButton(self.rb_long_time); self.bg_long.addButton(self.rb_long_evt)
         row3 = QHBoxLayout(); row3.addWidget(self.rb_long_time); row3.addWidget(self.rb_long_evt); subrun_layout.addLayout(row3)
+        
         row4 = QHBoxLayout()
         self.spin_chunk_val = QSpinBox(); self.spin_chunk_val.setRange(1, 10000000); self.spin_chunk_val.setValue(60)
         self.spin_total_chunk = QSpinBox(); self.spin_total_chunk.setRange(1, 1000); self.spin_total_chunk.setValue(10)
-        row4.addWidget(QLabel("Value/Chunk:")); row4.addWidget(self.spin_chunk_val); row4.addWidget(QLabel("Total Chunks:")); row4.addWidget(self.spin_total_chunk); subrun_layout.addLayout(row4)
+        row4.addWidget(QLabel("Value/Chunk:")); row4.addWidget(self.spin_chunk_val)
+        row4.addWidget(QLabel("Total Chunks:")); row4.addWidget(self.spin_total_chunk)
+        
+        row4.addWidget(QLabel("Idle(s):"))
+        self.spin_long_rest = QSpinBox()
+        self.spin_long_rest.setRange(0, 3600)
+        self.spin_long_rest.setValue(5)       
+        row4.addWidget(self.spin_long_rest)
+        
+        subrun_layout.addLayout(row4)
+        
         btn_sub = QPushButton("⏱️ Start Long Run")
         btn_sub.setStyleSheet("background-color: #009688; color: white; padding: 10px; font-weight:bold;")
         btn_sub.clicked.connect(self.start_subrun); subrun_layout.addWidget(btn_sub); subrun_layout.addStretch()
@@ -388,14 +433,15 @@ class DAQControlCenter(QMainWindow):
 
     def ansi_to_html(self, text):
         text = text.replace('<', '&lt;').replace('>', '&gt;')
-        text = re.sub(r'\033\[1;31m(.*?)\033\[0m', r'<span style="color:#FF5252; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;32m(.*?)\033\[0m', r'<span style="color:#69F0AE; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;33m(.*?)\033\[0m', r'<span style="color:#FFD740; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;34m(.*?)\033\[0m', r'<span style="color:#448AFF; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;35m(.*?)\033\[0m', r'<span style="color:#E040FB; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;36m(.*?)\033\[0m', r'<span style="color:#18FFFF; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;37m(.*?)\033\[0m', r'<span style="color:#FFFFFF; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;41m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#FF5252; font-weight:bold; padding:2px;">\1</span>', text) 
+        text = re.sub(r'\033\[1;31m(.*?)\033\[0m', r'<span style="color:#D32F2F; font-weight:bold;">\1</span>', text) 
+        text = re.sub(r'\033\[1;32m(.*?)\033\[0m', r'<span style="color:#2E7D32; font-weight:bold;">\1</span>', text) 
+        text = re.sub(r'\033\[1;33m(.*?)\033\[0m', r'<span style="color:#E65100; font-weight:bold;">\1</span>', text) 
+        text = re.sub(r'\033\[1;34m(.*?)\033\[0m', r'<span style="color:#1565C0; font-weight:bold;">\1</span>', text) 
+        text = re.sub(r'\033\[1;35m(.*?)\033\[0m', r'<span style="color:#8E24AA; font-weight:bold;">\1</span>', text) 
+        text = re.sub(r'\033\[1;36m(.*?)\033\[0m', r'<span style="color:#00838F; font-weight:bold;">\1</span>', text) 
+        text = re.sub(r'\033\[1;37m(.*?)\033\[0m', r'<span style="color:#212121; font-weight:bold;">\1</span>', text) 
+        text = re.sub(r'\033\[1;41m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#D32F2F; font-weight:bold; padding:2px;">\1</span>', text) 
+        text = re.sub(r'\033\[1;45m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#8E24AA; font-weight:bold; padding:2px;">\1</span>', text) 
         text = re.sub(r'\033\[[\d;]*m', '', text) 
         return text
 
@@ -405,7 +451,7 @@ class DAQControlCenter(QMainWindow):
             if is_error:
                 clean_line = re.sub(r'\033\[[\d;]*m', '', line)
                 safe_line = clean_line.replace('<', '&lt;').replace('>', '&gt;')
-                self.log_viewer.append(f'<span style="color:#FF5252; font-weight:bold;">{safe_line}</span>')
+                self.log_viewer.append(f'<span style="color:#D32F2F; font-weight:bold;">{safe_line}</span>')
             else:
                 html_line = self.ansi_to_html(line)
                 self.log_viewer.append(html_line)
@@ -606,9 +652,23 @@ class DAQControlCenter(QMainWindow):
         
         self.lbl_hw_status.setText("Hardware Status: Waiting for DAQ...")
         
-        if self.auto_mode == "SCAN": QTimer.singleShot(1000, self.run_next_scan_step)
-        elif self.auto_mode == "SUBRUN": self.current_subrun_idx += 1; QTimer.singleShot(1000, self.run_next_subrun)
-        elif self.auto_mode == "NONE": self.auto_finish()
+        if self.auto_mode == "SCAN":
+            rest_sec = self.spin_scan_rest.value()
+            if self.scan_queue: 
+                self.print_log(f"\033[1;33m[AUTO]\033[0m Hardware cooldown... Next scan will start in {rest_sec} seconds.")
+                self.lbl_dash_mode.setText("SCAN [RESTING]")
+            QTimer.singleShot(max(1000, rest_sec * 1000), self.run_next_scan_step)
+            
+        elif self.auto_mode == "SUBRUN":
+            self.current_subrun_idx += 1
+            rest_sec = self.spin_long_rest.value()
+            if self.current_subrun_idx <= self.subrun_max_idx:
+                self.print_log(f"\033[1;33m[AUTO]\033[0m Hardware cooldown... Next chunk will start in {rest_sec} seconds.")
+                self.lbl_dash_mode.setText("LONG RUN [RESTING]")
+            QTimer.singleShot(max(1000, rest_sec * 1000), self.run_next_subrun)
+            
+        elif self.auto_mode == "NONE":
+            self.auto_finish()
 
     def closeEvent(self, event):
         if self.daq_process.state() == QProcess.Running or (hasattr(self.hv_panel, 'device') and self.hv_panel.device is not None):
