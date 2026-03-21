@@ -1,37 +1,32 @@
-# ROOT 딕셔너리 소스 자동 생성
-ROOT_GENERATE_DICTIONARY(ObjectsDict 
-    include/RawChannel.hh 
-    include/RawData.hh
-    include/FadcBD.hh 
-    include/RunInfo.hh 
-    include/Pmt.hh
-    include/Run.hh
+# ==============================================================================
+# NKVME_FADC400 Objects / Dictionary CMake (Modern ROOT 6 Syntax)
+# ==============================================================================
+
+file(GLOB SOURCES "src/*.cc")
+file(GLOB HEADERS "include/*.hh")
+
+# 1. [최신 문법] ROOT 딕셔너리 생성
+root_generate_dictionary(ObjectsDict 
+    ${HEADERS} 
     LINKDEF include/LinkDef.h
 )
 
-# 공유 라이브러리(대문자 Objects) 빌드
-add_library(Objects SHARED 
-    src/RawChannel.cc 
-    src/RawData.cc
-    src/FadcBD.cc 
-    src/RunInfo.cc
-    src/Pmt.cc
-    src/Run.cc
-    ObjectsDict.cxx
-)
+# 2. [오프라인 분석용] 공유 라이브러리 (.so) 생성 - 이름 변경!
+add_library(NKVME_FADC400 SHARED ${SOURCES} ObjectsDict.cxx)
+target_include_directories(NKVME_FADC400 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(NKVME_FADC400 PUBLIC ROOT::Core ROOT::RIO ROOT::Hist ROOT::Tree ROOT::MathCore)
 
-# 딕셔너리 컴파일 시 "include/..." 경로를 찾을 수 있도록 현재 소스 폴더 경로 추가
-target_include_directories(Objects PUBLIC 
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
 
-target_link_libraries(Objects PUBLIC ${ROOT_LIBRARIES})
+# 3. [DAQ 코어용] 정적 라이브러리 (.a) 생성
+add_library(objects STATIC ${SOURCES} ObjectsDict.cxx)
+target_include_directories(objects PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(objects PUBLIC ROOT::Core ROOT::RIO ROOT::Hist ROOT::Tree ROOT::MathCore)
 
-# =======================================================================
-# [자동화] 빌드 완료 직후(POST_BUILD) 생성된 .pcm 파일을 bin/ 으로 자동 복사
-# =======================================================================
-add_custom_command(TARGET Objects POST_BUILD
-    COMMAND cp -u ${CMAKE_CURRENT_BINARY_DIR}/*.pcm ${CMAKE_SOURCE_DIR}/bin/
-    COMMENT "Deploying Objects ROOT PCM dictionaries to bin/ directory..."
+
+# 4. 빌드 완료 후 lib/ 폴더로 자동 배포
+add_custom_command(TARGET NKVME_FADC400 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/lib
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:NKVME_FADC400> ${CMAKE_SOURCE_DIR}/lib/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/ObjectsDict_rdict.pcm ${CMAKE_SOURCE_DIR}/lib/
+    COMMENT "✅ Deploying libNKVME_FADC400.so and ObjectsDict_rdict.pcm to lib/ directory."
 )
