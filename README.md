@@ -73,11 +73,11 @@ $cd ..$ ./bin/daq_gui.py
 ```
 
 ### 4. 수동 CLI 모드 (옵션)
-GUI 없이 백그라운드 환경이나 스크립트로 직접 구동할 경우:
+GUI 없이 백그라운드 환경이나 스크립트로 직접 구동할 경우 하드웨어 타겟명이 포함된 실행 파일을 사용합니다:
 ```bash
 # 실시간 파형 모니터 백그라운드 실행
-$ ./bin/OnlineMonitor &
+$ ./bin/OnlineMonitor_nfadc400 &
 
 # DAQ 수동 실행 (설정 파일 및 출력 파일 지정)
-$ ./bin/frontend -f ./config/ch1.config -o data/run_101.root -n 5000
+$ ./bin/frontend_nfadc400 -f ./config/ch1.config -o data/run_101.root -n 5000
 ```
