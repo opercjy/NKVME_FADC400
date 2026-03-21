@@ -108,16 +108,20 @@ OS 환경에 맞게 의존성 패키지를 설치합니다.
 ```bash
 sudo dnf install epel-release
 sudo dnf update
-sudo dnf install libusb1-devel python3-pip cmake gcc-c++ make
-pip3 install PyQt5
+# C++ 빌드 환경, USB 드라이버, Python 개발 헤더 및 SQLite 등 설치
+sudo dnf install libusb1-devel python3-pip python3-devel cmake gcc-c++ make sqlite
+# GUI 및 HV 제어(CAEN)를 위한 Python 패키지 설치
+pip3 install PyQt5 caen-libs
 ```
 
 **[Ubuntu / Debian 계열]**
 
 ```bash
 sudo apt-get update
-sudo apt-get install libusb-1.0-0-dev python3-pip cmake build-essential
-pip3 install PyQt5
+# C++ 빌드 환경, USB 드라이버, Python 개발 헤더 및 SQLite 등 설치
+sudo apt-get install libusb-1.0-0-dev python3-pip python3-dev cmake build-essential sqlite3
+# GUI 및 HV 제어(CAEN)를 위한 Python 패키지 설치
+pip3 install PyQt5 caen-libs
 ```
 
 *(※ CERN ROOT 6는 시스템에 미리 컴파일 및 설치되어, `thisroot.sh`를 통해 환경 변수가 설정되어 있어야 합니다.)*
