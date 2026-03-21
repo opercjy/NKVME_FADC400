@@ -195,3 +195,29 @@ cd bin/
 ### 6.4 실시간 분석 알고리즘 변경
 
   * DQM 모니터의 Charge 적분 및 Baseline 산출 로직을 변경하려면 `display/src/OnlineMonitor.cc` 파일 내 `HandleTimer()` 함수의 데이터 처리 블록을 수정한 뒤 C++ 코드를 재컴파일해야 합니다.
+  * 
+## 7\. GUI
+
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/ced23bd3-06b2-4faa-bddb-018c39bbaae2" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/d9ad8af2-77a2-4108-b7d8-da7460405d7d" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/eb295e20-05c2-4e68-9caa-86f192c39625" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/2a0c8cf5-a674-4a17-a82e-a4dad607fb50" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/5744742d-92b1-4c99-93bf-1c13a7b1fb0e" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/a4b91cb5-1f17-4446-84f8-1cb2a2ef987a" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/58fc1b39-12d2-4f60-9ece-0ebbbdafc2df" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/4565c7cf-29ef-4f8b-97dd-ce128b0a0e78" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/4d15261c-3e59-4088-a6f9-bf66f915771f" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/41a9c4f4-8ad6-4b8b-a15b-19cfd08ad231" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/652bddc2-e571-4d90-8f6f-ea8ff68a622e" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/1d313709-2eb3-426e-96ba-4dfa9459b8ca" />
+<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/5b4f654c-dc68-4775-9a32-a2d3e674f1b2" />
+<img width="1220" height="840" alt="image" src="https://github.com/user-attachments/assets/b23b6cd1-9fbb-4324-8356-56bc3e8720c9" />
+
+
+
+
+
+
+
+
+
