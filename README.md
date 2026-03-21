@@ -203,7 +203,7 @@ cd bin/
 
   * DQM 모니터의 Charge 적분 및 Baseline 산출 로직을 변경하려면 `display/src/OnlineMonitor.cc` 파일 내 `HandleTimer()` 함수의 데이터 처리 블록을 수정한 뒤 C++ 코드를 재컴파일해야 합니다.
 
-## 7\. 그래픽 인터페이스 및 사용자 경
+## 7\. 그래픽 인터페이스 및 사용자 경험
 
 <img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/ced23bd3-06b2-4faa-bddb-018c39bbaae2" />
 <img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/d9ad8af2-77a2-4108-b7d8-da7460405d7d" />
