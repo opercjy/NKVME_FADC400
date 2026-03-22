@@ -28,8 +28,8 @@ class ProductionManagerWidget(QWidget):
     def init_ui(self):
         main_layout = QVBoxLayout(self)
         
-        # --- 1. 파일 선택 부 ---
-        file_group = QGroupBox("1. Select Raw Data File (.root)")
+        # 💡 [Phase 6 수정] 라벨을 .root 에서 .dat (Binary)로 변경
+        file_group = QGroupBox("1. Select Raw Binary File (.dat)")
         file_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #673AB7; border-radius: 8px; margin-top: 15px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; color: #673AB7; }")
         file_layout = QHBoxLayout(); file_layout.setContentsMargins(15, 25, 15, 15)
         
@@ -70,10 +70,10 @@ class ProductionManagerWidget(QWidget):
         action_group.setLayout(action_layout)
         main_layout.addWidget(action_group)
 
-        # --- 3. [신규 추가] 인터랙티브 뷰어 전용 컨트롤 버튼 부 ---
+        # --- 3. 인터랙티브 뷰어 전용 컨트롤 버튼 부 ---
         self.interactive_group = QGroupBox("3. Interactive Viewer Controls (-d Mode)")
         self.interactive_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #FF9800; border-radius: 8px; margin-top: 15px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; color: #FF9800; }")
-        self.interactive_group.setEnabled(False) # 실행 전에는 비활성화 상태 유지
+        self.interactive_group.setEnabled(False) 
         
         inter_layout = QHBoxLayout(); inter_layout.setContentsMargins(15, 25, 15, 15)
 
@@ -104,7 +104,8 @@ class ProductionManagerWidget(QWidget):
         main_layout.addStretch()
 
     def browse_prod_file(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Select Raw ROOT File", self.data_dir, "ROOT Files (*.root)")
+        # 💡 [Phase 6 수정] 파일 탐색기 필터를 .dat 전용으로 변경
+        filename, _ = QFileDialog.getOpenFileName(self, "Select Raw Binary File", self.data_dir, "Binary Data Files (*.dat)")
         if filename:
             self.input_prod_file.setText(filename)
 
@@ -116,7 +117,7 @@ class ProductionManagerWidget(QWidget):
         
         self.interactive_group.setEnabled(False)
         self.prod_progress.setValue(0)
-        self.sig_log.emit(f"\033[1;35m[PROD]\033[0m Starting Batch Analysis: {os.path.basename(infile)}", False)
+        self.sig_log.emit(f"\033[1;35m[PROD]\033[0m Starting High-Speed Binary Batch Analysis: {os.path.basename(infile)}", False)
         
         args = ["-i", infile]
         if self.chk_save_wave.isChecked():
@@ -130,36 +131,31 @@ class ProductionManagerWidget(QWidget):
             QMessageBox.warning(self, "Error", "선택된 파일이 없거나 존재하지 않습니다.")
             return
             
-        self.interactive_group.setEnabled(True) # [핵심] 뷰어가 실행되면 컨트롤 버튼 활성화
-        self.sig_log.emit(f"\033[1;35m[PROD]\033[0m Launching Interactive Viewer (-d): {os.path.basename(infile)}", False)
+        self.interactive_group.setEnabled(True) 
+        self.sig_log.emit(f"\033[1;35m[PROD]\033[0m Launching Interactive Binary Viewer (-d): {os.path.basename(infile)}", False)
         self.sig_log.emit(f"\033[1;33m[TIP]\033[0m 아래의 'Interactive Viewer Controls' 패널 버튼을 클릭하여 파형을 넘겨보세요.", False)
         
         self.prod_process.start(os.path.join(self.current_dir, EXE_PRODUCTION), ["-i", infile, "-d"])
 
-    # --- [신규 추가] C++ 코어(STDIN)로 명령어 송신 ---
     def send_command(self, cmd):
-        """버튼을 클릭하면 해당 명령문자와 엔터(\n)를 QProcess에 밀어넣습니다."""
         if self.prod_process.state() == QProcess.Running:
             self.prod_process.write((cmd + "\n").encode('utf-8'))
 
     def cmd_jump(self):
-        """Jump 버튼을 누르면 이벤트를 입력받는 팝업을 띄우고 C++로 전송합니다."""
         if self.prod_process.state() != QProcess.Running: return
         num, ok = QInputDialog.getInt(self, "Jump to Event", "이동할 이벤트 번호를 입력하세요:", 0, 0, 2000000000, 1)
         if ok:
-            # C++ 코드가 'j'를 받고 나서 숫자를 기다리므로, "j\n123\n" 형태로 한 번에 쏴줍니다.
             self.send_command(f"j\n{num}")
-    # --------------------------------------------------
 
     def handle_stdout(self):
         raw_data = self.prod_process.readAllStandardOutput().data().decode("utf8", errors="replace")
         for line in raw_data.split('\n'):
             for subline in line.split('\r'):
                 if not subline.strip(): continue
-                match_prog = re.search(r'Processed:\s*(\d+)\s*/\s*(\d+)', subline)
+                # 💡 [Phase 6 수정] 퍼센티지(%) 기반의 새로운 상태바 업데이트 정규식 반영
+                match_prog = re.search(r'Progress:\s*([0-9.]+)\%', subline)
                 if match_prog:
-                    curr, total = int(match_prog.group(1)), int(match_prog.group(2))
-                    if total > 0: self.prod_progress.setValue(int((curr/total)*100))
+                    self.prod_progress.setValue(int(float(match_prog.group(1))))
                     continue
                 self.sig_log.emit(subline, False)
 
@@ -169,7 +165,7 @@ class ProductionManagerWidget(QWidget):
             self.sig_log.emit(err_data, True)
             
     def process_finished(self):
-        self.interactive_group.setEnabled(False) # [핵심] 뷰어가 종료되면 다시 비활성화
+        self.interactive_group.setEnabled(False) 
         self.sig_log.emit("\033[1;32m[PROD]\033[0m Offline Production Process Finished.", False)
         
     def terminate_process(self):
