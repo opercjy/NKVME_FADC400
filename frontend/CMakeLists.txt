@@ -18,6 +18,7 @@ target_link_libraries(frontend_nfadc400 PRIVATE
     Notice6UVMEROOT
     Threads::Threads
     ${ROOT_LIBRARIES}
+    zmq
 )
 
 # 2. Production 오프라인 분석기 빌드
