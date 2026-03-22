@@ -113,14 +113,17 @@ source nfadc400/notice_env.sh
 
 # 2. USB-VME 브릿지 통신 라이브러리 컴파일
 cd nfadc400/src/6uvme
+# 2개 폴더, root 연동 커널
 make clean; make
 
 # 3. FADC400 제어 라이브러리 컴파일
 cd ../nfadc400
+# 2개 폴더, root 연동 커널
 make clean; make
 
 # 4. VME 상태창(NoticeDISPLAY) 모듈 컴파일
 cd ../display
+# 2개 폴더, root 연동 커널
 make clean; make
 
 # 프로젝트 최상위 루트 폴더로 복귀
