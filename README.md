@@ -1,9 +1,17 @@
 -----
 
 # NKVME\_FADC400 : NoticeDAQ Central Control
+![C++](https://img.shields.io/badge/C++-14-blue?style=flat-square&logo=c%2B%2B)
+![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=flat-square&logo=python&logoColor=white)
+![ROOT](https://img.shields.io/badge/Framework-CERN%20ROOT%206-005aaa?style=flat-square)
+![PyQt5](https://img.shields.io/badge/GUI-PyQt5-41CD52?style=flat-square&logo=qt&logoColor=white)
+![CMake](https://img.shields.io/badge/Build-CMake-064F8C?style=flat-square&logo=cmake&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)
+![License](https://img.shields.io/badge/License-Notice_Authorized-red?style=flat-square)
 
-Notice & License
-본 레포지토리는 하드웨어 제조사인 Notice Korea의 공식적인 동의 및 허가 하에 로우레벨 통신 라이브러리(nfadc400, 6uvme)의 소스 코드를 공유하며, 연구 목적의 프레임워크 통합 및 지속적인 유지보수를 수행하고 있습니다.
+> **Notice & License**
+> 본 레포지토리는 하드웨어 제조사인 Notice Korea의 공식적인 동의 및 허가 하에 로우레벨 통신 라이브러리(nfadc400, 6uvme)의 소스 코드를 공유하며, 연구 목적의 프레임워크 통합 및 지속적인 유지보수를 수행하고 있습니다.
 
 **NKVME\_FADC400**은 VME 기반 Notice FADC400 (400MHz, 2.5ns/sample) 보드를 제어하고 데이터를 수집, 모니터링, 오프라인 분석을 수행하는 통합 데이터 획득(DAQ) 프레임워크입니다.
 
