@@ -7,12 +7,9 @@
 #include <cstring>
 
 #include "TROOT.h"
-#include "TFile.h"
-#include "TTree.h"
-#include "TSocket.h"
-#include "TMessage.h"
 #include "TStopwatch.h"
 #include "TError.h"      
+#include <zmq.hpp> // 💡 [Phase 6] ZMQ 헤더 추가
 
 #include "ThreadSafeQueue.hh"
 #include "ConfigParser.hh"
@@ -33,101 +30,76 @@ void SigIntHandler(int /*signum*/) {
     g_dataQueue.Stop(); 
 }
 
+// 💡 [Phase 6 핵심] TTree와 TSocket을 버리고 Pure Binary Dump 및 ZMQ 통신 적용
 void ConsumerWorker(const char* outFileName, bool useDisplay) {
-    TFile* outFile = new TFile(outFileName, "UPDATE");
-    if(!outFile || outFile->IsZombie()) {
-        ELog::Print(ELog::FATAL, Form("Cannot update ROOT file: %s", outFileName));
+    FILE* fp = fopen(outFileName, "wb");
+    if(!fp) {
+        ELog::Print(ELog::FATAL, Form("Cannot create binary file: %s", outFileName));
         g_isRunning = false;
         return;
     }
 
-    TTree* tree = new TTree("FADC", "FADC Raw Data Tree");
-    RawData* treeEvtData = new RawData(); 
-    tree->Branch("RawData", &treeEvtData);
-
-    TSocket* socket = nullptr;
-    auto lastNetTime = std::chrono::steady_clock::now();
-    auto lastConnTry = std::chrono::steady_clock::now(); 
-
+    // ZMQ 퍼블리셔 셋업 (스레드 내부에서 독립적으로 바인딩)
+    zmq::context_t ctx(1);
+    zmq::socket_t publisher(ctx, ZMQ_PUB);
     if (useDisplay) {
-        Int_t oldLevel = gErrorIgnoreLevel;
-        gErrorIgnoreLevel = kFatal; 
-        
-        socket = new TSocket("localhost", 9090);
-        if (socket->IsValid()) {
-            socket->SetOption(kNoBlock, 1); // 💡 [Phase 6] 논블로킹(Non-blocking) 통신 설정
-            ELog::Print(ELog::INFO, "Connected to Display Server (localhost:9090)");
-        } else {
-            delete socket; socket = nullptr;
-        }
-        gErrorIgnoreLevel = oldLevel; 
+        int conflate = 1;
+        publisher.setsockopt(ZMQ_CONFLATE, &conflate, sizeof(conflate));
+        publisher.bind("tcp://127.0.0.1:5556"); // FADC400용 ZMQ 포트
+        ELog::Print(ELog::INFO, "ZMQ High-Speed Publisher Started (Port: 5556)");
     }
 
     int nWrite = 0;
     RawData* popData = nullptr;
+    auto lastNetTime = std::chrono::steady_clock::now();
 
     while (g_dataQueue.WaitAndPop(popData)) {
         if (popData) {
-            RawData* temp = treeEvtData;
-            treeEvtData = popData; 
-            
-            tree->Fill();
+            uint32_t nCh = popData->GetNChannels();
+            uint32_t nPts = (nCh > 0) ? popData->GetChannel(0)->GetNSamples() : 0;
+
+            // 1. 디스크에 순수 바이너리(Flat) 덤프 (무손실 최고 속도)
+            uint32_t header[3] = { (uint32_t)nWrite, nCh, nPts };
+            fwrite(header, sizeof(uint32_t), 3, fp);
+
+            // ZMQ로 보낼 플랫 바이너리 페이로드 사전 할당
+            size_t payloadSize = 12 + nCh * (4 + nPts * 2);
+            zmq::message_t msg(payloadSize);
+            unsigned char* msg_ptr = static_cast<unsigned char*>(msg.data());
+            std::memcpy(msg_ptr, header, 12);
+            size_t offset = 12;
+
+            for (uint32_t c = 0; c < nCh; c++) {
+                RawChannel* ch = popData->GetChannel(c);
+                uint32_t chId = ch->GetChannelID();
+                const std::vector<unsigned short>& trace = ch->GetTrace();
+
+                // 파일 쓰기
+                fwrite(&chId, sizeof(uint32_t), 1, fp);
+                fwrite(trace.data(), sizeof(unsigned short), nPts, fp);
+
+                // ZMQ 메모리 복사 (Zero-Copy 준비)
+                std::memcpy(msg_ptr + offset, &chId, 4);
+                offset += 4;
+                std::memcpy(msg_ptr + offset, trace.data(), nPts * 2);
+                offset += nPts * 2;
+            }
             nWrite++;
 
+            // 2. 파이썬 GUI가 뻗지 않도록 50ms 마다 1번씩만 ZMQ로 브로드캐스팅
             auto now = std::chrono::steady_clock::now();
-
-            if (useDisplay && (!socket || !socket->IsValid())) {
-                if (std::chrono::duration_cast<std::chrono::seconds>(now - lastConnTry).count() >= 2) {
-                    if (socket) { delete socket; socket = nullptr; }
-                    
-                    Int_t oldLevel = gErrorIgnoreLevel;
-                    gErrorIgnoreLevel = kFatal; 
-                    socket = new TSocket("localhost", 9090);
-                    if (socket->IsValid()) {
-                        socket->SetOption(kNoBlock, 1); // 💡 재연결 시에도 논블로킹 강제
-                        ELog::Print(ELog::INFO, "Reconnected to Display Server!");
-                    } else {
-                        delete socket; socket = nullptr;
-                    }
-                    gErrorIgnoreLevel = oldLevel; 
-                    lastConnTry = now;
-                }
-            }
-
-            // 💡 [Phase 6] TSocket Backpressure 방어: 50ms 마다 가장 최신 1개 이벤트만 렌더링 (Safe-Drop)
-            if (socket && socket->IsValid() && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
-                TMessage mess(kMESS_OBJECT);
-                mess.WriteObject(treeEvtData);
-                
-                Int_t oldLevel = gErrorIgnoreLevel;
-                gErrorIgnoreLevel = kFatal; 
-                
-                int snd = socket->Send(mess);
-                
-                gErrorIgnoreLevel = oldLevel;
-                
-                // -4는 ROOT TSocket의 EWOULDBLOCK 이므로 끊지 않고 패스
-                if (snd <= 0 && snd != -4) { 
-                    socket->Close();
-                    delete socket;
-                    socket = nullptr;
-                }
+            if (useDisplay && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
+                publisher.send(msg, zmq::send_flags::dontwait);
                 lastNetTime = now;
             }
 
-            temp->Clear("C"); 
-            g_freeQueue.Push(temp); 
+            popData->Clear("C"); 
+            g_freeQueue.Push(popData); 
         }
     }
 
-    tree->AutoSave();
-    outFile->Write();
-    outFile->Close();
-    delete outFile;
-
-    if (treeEvtData) { treeEvtData->Clear("C"); delete treeEvtData; }
-    if (socket) { socket->Close(); delete socket; }
-    ELog::Print(ELog::INFO, Form("Consumer Thread: Saved %d events successfully.", nWrite));
+    fclose(fp);
+    ELog::Print(ELog::INFO, Form("Consumer Thread: Saved %d binary events successfully.", nWrite));
 }
 
 int main(int argc, char ** argv) {
@@ -136,7 +108,7 @@ int main(int argc, char ** argv) {
     std::signal(SIGTERM, SigIntHandler);
 
     TString configFile = "";
-    TString outFile = "data.root";
+    TString outFile = "data.dat"; // 💡 확장자 기본값 .dat 로 변경
     int presetNEvt = 0;
     
     int opt;
@@ -149,7 +121,7 @@ int main(int argc, char ** argv) {
     }
 
     if(configFile == "") {
-        ELog::Print(ELog::ERROR, "Usage: frontend -f <ticket.config> [-o <out.root>] [-n <events>]");
+        ELog::Print(ELog::ERROR, "Usage: frontend -f <ticket.config> [-o <out.dat>] [-n <events>]");
         return 1;
     }
 
@@ -208,20 +180,14 @@ int main(int argc, char ** argv) {
         }
     }
 
-    TFile* hfile = new TFile(outFile.Data(), "RECREATE");
-    runInfo->Write();
-    hfile->Close();
-    delete hfile;
-
     int recordLength = runInfo->GetFadcBD(0)->RL(); 
     int dataPoints = recordLength * 128;            
     int hevt = (recordLength > 4) ? (4096 / recordLength) : 512;
     
-    // 💡 [Phase 6] VME 마이크로 트랜잭션 오버헤드 제거를 위한 1MB 단위의 Bulk-Fetch 메모리 할당
     char* bulk_buffers[32][4] = {nullptr}; 
     for (int i = 0; i < nbd; i++) {
         for (int j = 0; j < 4; j++) {
-            bulk_buffers[i][j] = new char[0x100000]; // 채널당 1MB 할당 (Dump & Demux용)
+            bulk_buffers[i][j] = new char[0x100000]; 
         }
     }
 
@@ -249,10 +215,8 @@ int main(int argc, char ** argv) {
         int isFill = 0;
         int zombie_err_cnt = 0;
 
-        // 💡 [Phase 6] Zombie 무한 루프 방어 로직 적용
         while (g_isRunning && !isFill) {
             unsigned long stat = (bufnum == 0) ? fadc.NFADC400read_RunL(primary_mid) : fadc.NFADC400read_RunH(primary_mid);
-            
             if (stat == 0xFFFFFFFF) {
                 zombie_err_cnt++;
                 if (zombie_err_cnt > 10) {
@@ -264,19 +228,17 @@ int main(int argc, char ** argv) {
                 continue;
             }
             zombie_err_cnt = 0;
-            isFill = (stat == 0); // 0일 때 버퍼 가득 참
+            isFill = (stat == 0); 
             if (!isFill) std::this_thread::yield(); 
         }
         if(!g_isRunning) break;
 
-        // 💡 [Phase 6] Zero-Deadtime Ping-Pong 트리거 재배열
         int next_bufnum = 1 - bufnum; 
         for (int i = 0; i < nbd; i++) {
             if (next_bufnum == 1) fadc.NFADC400startH(runInfo->GetFadcBD(i)->MID());
             else                  fadc.NFADC400startL(runInfo->GetFadcBD(i)->MID());
         }
 
-        // 💡 [Phase 6] Dump & Demux (최적화의 핵심)
         for (int i = 0; i < nbd; i++) {
             FadcBD* bd = runInfo->GetFadcBD(i);
             if (bd->IsTrgBD()) continue;
@@ -301,7 +263,6 @@ int main(int argc, char ** argv) {
                     RawChannel* chObj = eventData->AddChannel(global_chId, dataPoints);
                     
                     unsigned char* evt_ptr = (unsigned char*)bulk_buffers[i][j] + (evtIdx * dataPoints * 2);
-                    
                     for (int k = 0; k < dataPoints; k++) {
                         unsigned short val = (evt_ptr[k*2 + 1] << 8) | evt_ptr[k*2];
                         chObj->AddSample(val & 0x0FFF); 
