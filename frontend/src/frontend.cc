@@ -11,6 +11,7 @@
 #include "TSocket.h"
 #include "TMessage.h"
 #include "TStopwatch.h"
+#include "TError.h"      // 🔥 [버그 픽스] ROOT 내부 에러 억제용 헤더
 
 #include "ThreadSafeQueue.hh"
 #include "ConfigParser.hh"
@@ -47,8 +48,15 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
     auto lastNetTime = std::chrono::steady_clock::now();
     auto lastConnTry = std::chrono::steady_clock::now(); 
 
+    // 💡 [버그 픽스] 첫 연결 시 ROOT 에러 묵음 처리 (터미널 스팸 방지)
     if (useDisplay) {
+        Int_t oldLevel = gErrorIgnoreLevel;
+        gErrorIgnoreLevel = kFatal; 
+        
         socket = new TSocket("localhost", 9090);
+        
+        gErrorIgnoreLevel = oldLevel; 
+
         if (!socket->IsValid()) {
             delete socket; socket = nullptr;
         } else {
@@ -69,10 +77,18 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
 
             auto now = std::chrono::steady_clock::now();
 
+            // 💡 [버그 픽스] 소켓 재연결 시(2초마다) ROOT 에러 묵음 처리
             if (useDisplay && (!socket || !socket->IsValid())) {
                 if (std::chrono::duration_cast<std::chrono::seconds>(now - lastConnTry).count() >= 2) {
                     if (socket) { delete socket; socket = nullptr; }
+                    
+                    Int_t oldLevel = gErrorIgnoreLevel;
+                    gErrorIgnoreLevel = kFatal; 
+                    
                     socket = new TSocket("localhost", 9090);
+                    
+                    gErrorIgnoreLevel = oldLevel; 
+
                     if (socket->IsValid()) {
                         ELog::Print(ELog::INFO, "Reconnected to Display Server!");
                     } else {
@@ -82,10 +98,18 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
                 }
             }
 
+            // 50ms 간격으로 소켓을 통해 데이터를 온라인 모니터(Display)로 전송
             if (socket && socket->IsValid() && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
                 TMessage mess(kMESS_OBJECT);
                 mess.WriteObject(treeEvtData);
+                
+                // 💡 [버그 픽스] Send 과정에서 모니터가 꺼졌을 때 발생하는 "Connection reset by peer" 에러 묵음 처리
+                Int_t oldLevel = gErrorIgnoreLevel;
+                gErrorIgnoreLevel = kFatal; 
+                
                 int snd = socket->Send(mess);
+                
+                gErrorIgnoreLevel = oldLevel;
                 
                 if (snd <= 0) { 
                     socket->Close();
@@ -245,7 +269,7 @@ int main(int argc, char ** argv) {
                     
                     fadc.NFADC400read_BUFFER(bd->MID(), cid, recordLength, page, raw_buffer);
                     
-                    // [버그 픽스] 다중 보드 사용 시 채널 ID 겹침 현상 원천 차단
+                    // 💡 [버그 픽스] 다중 보드 지원 글로벌 채널 매핑 (채널 덮어쓰기 방지)
                     int global_chId = (bd->MID() * 4) + bd->CID(j);
                     RawChannel* chObj = eventData->AddChannel(global_chId, dataPoints);
                     
@@ -275,6 +299,7 @@ int main(int argc, char ** argv) {
             double rate = (dt > 0) ? (nevt - lastEvt) / dt : 0.0;
             lastTime = curTime; lastEvt = nevt;
             
+            // ✅ [기능 보존] 큐/풀 상태 모니터링 출력
             printf("\r\033[1;32m ⚡ Events: %-8d\033[0m | \033[1;33m⏱ Time: %-5.1f s\033[0m | \033[1;35m🔥 Rate: %-6.1f Hz\033[0m | \033[1;36m💾 DataQ: %-4zu\033[0m | \033[1;35m♻ Pool: %-4zu\033[0m", 
                    nevt, curTime, rate, g_dataQueue.Size(), g_freeQueue.Size());
             fflush(stdout);
@@ -297,6 +322,7 @@ int main(int argc, char ** argv) {
     delete runInfo;
     vme.VMEclose();
 
+    // ✅ [기능 보존] 종료 시 Summary 표 출력
     double totalTime = sw.RealTime();
     double avgRate = (totalTime > 0) ? (nevt / totalTime) : 0.0;
     std::cout << "\n\033[1;36m╔═══════════════════════ DAQ SUMMARY ═══════════════════════╗\033[0m" << std::endl;

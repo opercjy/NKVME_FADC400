@@ -23,7 +23,8 @@ Bool_t SafeTimer::Notify() {
 OnlineMonitor::OnlineMonitor(const TGWindow *p, UInt_t w, UInt_t h) 
     : TGMainFrame(p, w, h), fServerSocket(nullptr), fSocket(nullptr)
 {
-    gSystem->Load("libObjects.so");
+    // 🔥 [버그 픽스] 과거의 libObjects.so 대신 통합 공유 라이브러리를 로드하도록 수정!
+    gSystem->Load("libNKVME_FADC400.so");
     gStyle->SetOptStat(111111); 
 
     fEcanvas = new TRootEmbeddedCanvas("Ecanvas", this, w, h);
@@ -57,6 +58,7 @@ OnlineMonitor::~OnlineMonitor() {
     for(auto& pair : fWaveform) delete pair.second;
     for(auto& pair : fSpectrum) delete pair.second;
     for(auto& pair : fBaseLine) delete pair.second;
+    fWaveform.clear(); fSpectrum.clear(); fBaseLine.clear();
     
     Cleanup();
 }
