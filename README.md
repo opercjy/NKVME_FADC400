@@ -116,26 +116,36 @@ NKVME_FADC400/
 메인 프레임워크를 빌드하기 전에, 하드웨어 장비와 직접 통신하는 Notice 제조사의 원본 라이브러리를 **반드시 가장 먼저** 컴파일해야 합니다. 환경 변수를 셋업하고 3개의 하위 폴더(`6uvme`, `nfadc400`, `display`)에 각각 들어가서 빌드를 진행합니다.
 
 ```bash
-# 1. 제조사 환경 변수 로드 (NKHOME 경로 지정)
+# 1. 관리자 권한 획득 (su 또는 sudo su)
+sudo su
+
+# 2. 제조사 환경 변수 로드 (NKHOME 경로 설정 등)
 source nfadc400/notice_env.sh
 
-# 2. USB-VME 브릿지 통신 라이브러리 컴파일
-cd nfadc400/src/6uvme
-# 2개 폴더, root 연동 커널
-make clean; make
+# 3. USB-VME 브릿지 통신 라이브러리 설치
+cd nfadc400/src/6uvme/6uvme          # 일반 C 코어
+make clean; make; make install
 
-# 3. FADC400 제어 라이브러리 컴파일
-cd ../nfadc400
-# 2개 폴더, root 연동 커널
-make clean; make
+cd ../6uvmeroot                      # ROOT 연동 커널
+make clean; make; make install
 
-# 4. VME 상태창(NoticeDISPLAY) 모듈 컴파일
-cd ../display
-# 2개 폴더, root 연동 커널
-make clean; make
+# 4. FADC400 제어 라이브러리 설치
+cd ../../nfadc400/nfadc400           # 일반 C 코어
+make clean; make; make install
 
-# 프로젝트 최상위 루트 폴더로 복귀
-cd ../../..
+cd ../nfadc400root                   # ROOT 연동 커널
+make clean; make; make install
+
+# 5. VME 상태창 (NoticeDISPLAY) 모듈 설치
+cd ../../display/display             # 일반 C 코어
+make clean; make; make install
+
+cd ../displayroot                    # ROOT 연동 커널
+make clean; make; make install
+
+# 6. 관리자 모드 종료 및 최상단 디렉토리 복귀
+exit
+cd ../../../..
 ```
 
 ### 4.2 필수 패키지 설치
