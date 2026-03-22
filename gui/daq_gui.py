@@ -7,13 +7,16 @@ import sqlite3
 import glob
 import re
 import shutil
+import zmq
+import numpy as np
+import pyqtgraph as pg
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                              QGroupBox, QMessageBox, QTextEdit, QComboBox, 
                              QLCDNumber, QProgressBar, QTabWidget, QSpinBox, 
                              QRadioButton, QButtonGroup, QSplitter)
-from PyQt5.QtCore import QProcess, Qt, QRegExp, QTimer
+from PyQt5.QtCore import QProcess, Qt, QRegExp, QTimer, pyqtSignal, QThread
 from PyQt5.QtGui import QRegExpValidator, QTextCursor, QFont
 
 from hv_control import HVControlPanel
@@ -29,12 +32,54 @@ CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 TEMP_CONFIG = os.path.join(CONFIG_DIR, "temp_auto.config")
 
 EXE_FRONTEND = "frontend_nfadc400"
-EXE_MONITOR = "OnlineMonitor_nfadc400"
+
+# 💡 [Phase 6] FADC400용 비동기 ZMQ 수신 스레드 (GUI 멈춤 방어 & Zero-Copy)
+class ZmqReceiver(QThread):
+    sig_wave = pyqtSignal(dict)
+
+    def __init__(self):
+        super().__init__()
+        self.running = False
+        self.ctx = zmq.Context()
+        self.sock = self.ctx.socket(zmq.SUB)
+        self.sock.setsockopt(zmq.CONFLATE, 1) # 최신 1개만 수신
+        self.sock.setsockopt_string(zmq.SUBSCRIBE, "")
+
+    def run(self):
+        self.sock.connect("tcp://127.0.0.1:5556")
+        self.running = True
+        while self.running:
+            try:
+                msg = self.sock.recv(flags=zmq.NOBLOCK)
+                
+                # C++에서 전송한 Flat Binary 헤더 파싱 [EvtNum, NumChannels, DataPoints]
+                header = np.frombuffer(msg[:12], dtype=np.uint32)
+                evt_num, num_channels, n_points = header[0], header[1], header[2]
+                
+                offset = 12
+                waveforms = {}
+                # 채널별 파형 데이터 파싱
+                for i in range(num_channels):
+                    ch_id = np.frombuffer(msg[offset:offset+4], dtype=np.uint32)[0]
+                    offset += 4
+                    wave = np.frombuffer(msg[offset:offset+n_points*2], dtype=np.uint16)
+                    offset += n_points * 2
+                    waveforms[ch_id] = wave
+                
+                self.sig_wave.emit(waveforms)
+            except zmq.Again:
+                self.msleep(20)
+            except Exception:
+                pass
+
+    def stop(self):
+        self.running = False
+        self.wait()
 
 class DAQControlCenter(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("6UVME+NFADC400 Central Control")
+        self.setWindowTitle("6UVME+NFADC400 Central Control (ZMQ Live)")
         self.setMinimumSize(1250, 900)
         self.data_output_dir = PROJECT_ROOT
         
@@ -48,9 +93,10 @@ class DAQControlCenter(QMainWindow):
         self.daq_process.readyReadStandardError.connect(self.handle_stderr)
         self.daq_process.finished.connect(self.process_finished)
         
-        self.monitor_process = QProcess(self)
-        self.monitor_process.readyReadStandardOutput.connect(self.handle_mon_stdout)
-        self.monitor_process.readyReadStandardError.connect(self.handle_mon_stderr)
+        # 💡 [Phase 6] QProcess 모니터 대신 QThread ZMQ 수신기 탑재
+        self.zmq_thread = ZmqReceiver()
+        self.zmq_thread.sig_wave.connect(self.update_plot)
+        self.use_zmq_viewer = False 
 
         self.auto_mode = "NONE" 
         self.scan_queue = []; self.scan_current_val = 0
@@ -76,7 +122,7 @@ class DAQControlCenter(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
 
         top_layout = QHBoxLayout()
-        title_lbl = QLabel("6UVME+NFADC400 Central Control")
+        title_lbl = QLabel("6UVME+NFADC400 Central Control (Pure Binary + ZMQ)")
         title_lbl.setFont(QFont("Arial", 18, QFont.Bold))
         self.clock_lbl = QLabel("0000-00-00 00:00:00")
         self.clock_lbl.setFont(QFont("Consolas", 14, QFont.Bold))
@@ -133,11 +179,11 @@ class DAQControlCenter(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_layout.setContentsMargins(5, 5, 5, 5)
         
-        self.btn_start_mon = QPushButton("👁️ Show Monitor")
+        self.btn_start_mon = QPushButton("👁️ Monitor ON")
         self.btn_start_mon.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 8px;")
         self.btn_start_mon.clicked.connect(self.start_monitor)
         
-        self.btn_stop_mon = QPushButton("🙈 Hide Monitor")
+        self.btn_stop_mon = QPushButton("🙈 Monitor OFF")
         self.btn_stop_mon.setStyleSheet("background-color: #9E9E9E; color: white; font-weight: bold; padding: 8px;")
         self.btn_stop_mon.clicked.connect(self.stop_monitor)
         
@@ -158,17 +204,14 @@ class DAQControlCenter(QMainWindow):
 
         self.right_widget = QWidget()
         right_panel = QVBoxLayout(self.right_widget)
-        # [수정] 우측 테두리 잘림을 방지하기 위해 마진을 넉넉히 줍니다.
         right_panel.setContentsMargins(5, 5, 5, 5)
         
         dash_group = QGroupBox("Live Status Dashboard")
-        # [수정] margin-top을 줘서 타이틀 글자가 테두리와 겹치지 않게 합니다.
         dash_group.setStyleSheet("""
             QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; background-color: #FAFAFA; border-radius: 8px; margin-top: 20px; }
             QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; padding: 0 5px; color: #424242; }
         """)
         dash_layout = QVBoxLayout()
-        # [수정] 내부 마진의 상단(top) 여백을 충분히 주어 글자와 겹치지 않게 합니다.
         dash_layout.setContentsMargins(15, 25, 15, 15) 
         dash_layout.setSpacing(10) 
         
@@ -194,12 +237,7 @@ class DAQControlCenter(QMainWindow):
         self.lcd_events = QLCDNumber(); self.lcd_events.setDigitCount(9)
         self.lcd_events.setSegmentStyle(QLCDNumber.Flat)
         self.lcd_events.setStyleSheet("""
-            QLCDNumber {
-                background-color: #F0F4F8; 
-                color: #37474F; 
-                border: 2px solid #CFD8DC; 
-                border-radius: 6px;
-            }
+            QLCDNumber { background-color: #F0F4F8; color: #37474F; border: 2px solid #CFD8DC; border-radius: 6px; }
         """)
         self.lcd_events.setMinimumHeight(45) 
         dash_layout.addWidget(self.lcd_events)
@@ -211,18 +249,24 @@ class DAQControlCenter(QMainWindow):
         self.lbl_disk = QLabel("Disk Space: Calculating...")
         dash_layout.addWidget(self.lbl_disk)
         
-        dash_layout.addWidget(QLabel("Current Config Summary:"))
-        self.txt_config_summary = QTextEdit(); self.txt_config_summary.setReadOnly(True)
-        self.txt_config_summary.setStyleSheet("background-color: #FFFFFF; color: #3E2723; font-size: 11px; border: 1px solid #E0E0E0;")
-        dash_layout.addWidget(self.txt_config_summary, stretch=1)
+        # 💡 [Phase 6] PyQtGraph 라이브 파형 뷰어 통합
+        plot_group = QGroupBox("ZMQ Live Waveform Monitor")
+        plot_layout = QVBoxLayout()
+        pg.setConfigOption('background', 'w'); pg.setConfigOption('foreground', 'k')
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setYRange(0, 4096)
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.setLabel('left', 'ADC Value'); self.plot_widget.setLabel('bottom', 'Time (Samples)')
+        self.plot_curve = self.plot_widget.plot(pen=pg.mkPen(color='#1976D2', width=1.5), autoDownsample=True, clipToView=True)
+        plot_layout.addWidget(self.plot_widget); plot_group.setLayout(plot_layout)
+        dash_layout.addWidget(plot_group, stretch=1)
         
         dash_group.setLayout(dash_layout); right_panel.addWidget(dash_group, stretch=1)
         
         self.middle_splitter.addWidget(left_widget)
         self.middle_splitter.addWidget(self.right_widget)
-        # [수정] 대시보드 창 크기를 약간 줄입니다 (7:3 비율)
-        self.middle_splitter.setStretchFactor(0, 7)
-        self.middle_splitter.setStretchFactor(1, 3)
+        self.middle_splitter.setStretchFactor(0, 6)
+        self.middle_splitter.setStretchFactor(1, 4)
         
         main_layout.addWidget(self.middle_splitter, stretch=1)
 
@@ -230,13 +274,11 @@ class DAQControlCenter(QMainWindow):
         bottom_layout.setContentsMargins(0, 5, 0, 0)
         
         log_group = QGroupBox("System Console")
-        # [수정] 콘솔 그룹박스 CSS 타이틀 겹침 방지 처리
         log_group.setStyleSheet("""
             QGroupBox { font-weight: bold; border: 2px solid #B0BEC5; border-radius: 8px; margin-top: 20px; }
             QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; padding: 0 5px; color: #455A64; }
         """)
         log_layout = QVBoxLayout()
-        # [수정] Top 마진을 25로 늘려서 하드웨어 상태 라벨이 테두리에 가려지지 않게 함
         log_layout.setContentsMargins(15, 25, 15, 15) 
         
         self.lbl_hw_status = QLabel("Hardware Status: Waiting for DAQ...")
@@ -246,71 +288,46 @@ class DAQControlCenter(QMainWindow):
 
         self.log_viewer = QTextEdit(); self.log_viewer.setReadOnly(True)
         self.log_viewer.setStyleSheet("""
-            QTextEdit {
-                background-color: #F8F9FA; 
-                color: #263238; 
-                font-family: 'Consolas', monospace; 
-                font-size: 12px; 
-                border: 1px solid #CFD8DC;
-            }
+            QTextEdit { background-color: #F8F9FA; color: #263238; font-family: 'Consolas', monospace; font-size: 12px; border: 1px solid #CFD8DC; }
         """)
         log_layout.addWidget(self.log_viewer); log_group.setLayout(log_layout); bottom_layout.addWidget(log_group)
         
-        main_layout.addLayout(bottom_layout, stretch=2) 
+        main_layout.addLayout(bottom_layout, stretch=1) 
         self.refresh_configs()
         self.input_runnum.setText(self.elog_panel.get_next_run_number())
 
     def toggle_dashboard(self):
         if self.right_widget.isVisible():
-            self.right_widget.hide()
-            self.btn_toggle_dash.setText("◀ Show Dashboard")
+            self.right_widget.hide(); self.btn_toggle_dash.setText("◀ Show Dashboard")
             self.btn_toggle_dash.setStyleSheet("background-color: #455A64; color: white; font-weight: bold; padding: 8px;")
-            self.setMinimumWidth(700) # 좌측 탭이 안 찌그러질 정도의 안전 마진
-            self.resize(700, self.height())     
+            self.setMinimumWidth(700); self.resize(700, self.height())     
         else:
-            self.right_widget.show()
-            self.btn_toggle_dash.setText("▶ Hide Dashboard")
+            self.right_widget.show(); self.btn_toggle_dash.setText("▶ Hide Dashboard")
             self.btn_toggle_dash.setStyleSheet("background-color: #607D8B; color: white; font-weight: bold; padding: 8px;")
-            self.setMinimumWidth(1250)          
-            self.resize(1250, self.height())    
+            self.setMinimumWidth(1250); self.resize(1250, self.height())    
 
     def update_data_dir(self, new_dir):
         self.data_output_dir = new_dir
         self.print_log(f"\033[1;36m[SYSTEM]\033[0m Data output directory changed to: {self.data_output_dir}")
 
     def init_daq_tabs(self):
-        # [1] Manual DAQ
         tab_manual = QWidget(); manual_layout = QVBoxLayout(tab_manual)
         manual_layout.setContentsMargins(8, 8, 8, 8); manual_layout.setSpacing(8)
-        
         self.combo_config = QComboBox()
-        self.combo_config.currentIndexChanged.connect(self.update_config_summary) 
         self.input_runnum = QLineEdit(); self.input_runnum.setValidator(QRegExpValidator(QRegExp("^[0-9]+$")))
-        
-        self.combo_runtag = QComboBox()
-        self.combo_runtag.addItems(["TEST", "PHYSICS", "CALIBRATION", "COSMIC"])
-        self.combo_runtag.setStyleSheet("background-color: #FFF3E0;")
-        
-        self.combo_quality = QComboBox()
-        self.combo_quality.addItems(["PENDING (미정)", "GOOD (정상)", "BAD (폐기)"])
-        self.combo_quality.setStyleSheet("background-color: #E8EAF6;")
-        
+        self.combo_runtag = QComboBox(); self.combo_runtag.addItems(["TEST", "PHYSICS", "CALIBRATION", "COSMIC"]); self.combo_runtag.setStyleSheet("background-color: #FFF3E0;")
+        self.combo_quality = QComboBox(); self.combo_quality.addItems(["PENDING (미정)", "GOOD (정상)", "BAD (폐기)"]); self.combo_quality.setStyleSheet("background-color: #E8EAF6;")
         self.input_desc = QLineEdit()
         
         manual_layout.addWidget(QLabel("Base Config File:")); manual_layout.addWidget(self.combo_config)
-        
-        row1 = QHBoxLayout(); row1.addWidget(QLabel("Run:")); row1.addWidget(self.input_runnum)
-        row1.addWidget(QLabel("Tag:")); row1.addWidget(self.combo_runtag)
-        row1.addWidget(QLabel("Quality:")); row1.addWidget(self.combo_quality)
+        row1 = QHBoxLayout(); row1.addWidget(QLabel("Run:")); row1.addWidget(self.input_runnum); row1.addWidget(QLabel("Tag:")); row1.addWidget(self.combo_runtag); row1.addWidget(QLabel("Quality:")); row1.addWidget(self.combo_quality)
         manual_layout.addLayout(row1)
-        
         manual_layout.addWidget(QLabel("Description:")); manual_layout.addWidget(self.input_desc)
         
         stop_group = QGroupBox("Stop Condition")
         stop_layout = QHBoxLayout(); stop_layout.setContentsMargins(5, 10, 5, 5)
         self.bg_manual = QButtonGroup()
-        self.rb_manual_cont = QRadioButton("Continuous"); self.rb_manual_evt = QRadioButton("By Events"); self.rb_manual_time = QRadioButton("By Time (Sec)")
-        self.rb_manual_cont.setChecked(True)
+        self.rb_manual_cont = QRadioButton("Continuous"); self.rb_manual_evt = QRadioButton("By Events"); self.rb_manual_time = QRadioButton("By Time (Sec)"); self.rb_manual_cont.setChecked(True)
         self.bg_manual.addButton(self.rb_manual_cont); self.bg_manual.addButton(self.rb_manual_evt); self.bg_manual.addButton(self.rb_manual_time)
         self.spin_manual_val = QSpinBox(); self.spin_manual_val.setRange(1, 10000000); self.spin_manual_val.setValue(5000); self.spin_manual_val.setEnabled(False)
         self.rb_manual_cont.toggled.connect(lambda: self.spin_manual_val.setEnabled(not self.rb_manual_cont.isChecked()))
@@ -322,7 +339,6 @@ class DAQControlCenter(QMainWindow):
         btn_m.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; font-weight:bold; font-size: 13px;")
         btn_m.clicked.connect(self.start_manual_daq); manual_layout.addWidget(btn_m); manual_layout.addStretch()
         
-        # [2] THR Scan
         tab_scan = QWidget(); scan_layout = QVBoxLayout(tab_scan)
         scan_layout.setContentsMargins(8, 8, 8, 8); scan_layout.setSpacing(6)
         scan_layout.addWidget(QLabel("자동으로 Threshold(THR) 값을 변경하며 스캔합니다."))
@@ -331,33 +347,23 @@ class DAQControlCenter(QMainWindow):
         self.spin_thr_start = QSpinBox(); self.spin_thr_start.setRange(0, 1000); self.spin_thr_start.setValue(50)
         self.spin_thr_end = QSpinBox(); self.spin_thr_end.setRange(0, 1000); self.spin_thr_end.setValue(200)
         self.spin_thr_step = QSpinBox(); self.spin_thr_step.setRange(1, 500); self.spin_thr_step.setValue(10)
-        row2.addWidget(QLabel("Start:")); row2.addWidget(self.spin_thr_start)
-        row2.addWidget(QLabel("End:")); row2.addWidget(self.spin_thr_end)
-        row2.addWidget(QLabel("Step:")); row2.addWidget(self.spin_thr_step)
+        row2.addWidget(QLabel("Start:")); row2.addWidget(self.spin_thr_start); row2.addWidget(QLabel("End:")); row2.addWidget(self.spin_thr_end); row2.addWidget(QLabel("Step:")); row2.addWidget(self.spin_thr_step)
         scan_layout.addLayout(row2)
         
         self.bg_scan = QButtonGroup()
         self.rb_scan_evt = QRadioButton("By Events"); self.rb_scan_time = QRadioButton("By Time (Sec)"); self.rb_scan_evt.setChecked(True)
         self.bg_scan.addButton(self.rb_scan_evt); self.bg_scan.addButton(self.rb_scan_time)
         
-        row_scan_opt = QHBoxLayout()
-        row_scan_opt.addWidget(self.rb_scan_evt); row_scan_opt.addWidget(self.rb_scan_time)
-        self.spin_scan_val = QSpinBox(); self.spin_scan_val.setRange(1, 10000000); self.spin_scan_val.setValue(5000)
-        row_scan_opt.addWidget(self.spin_scan_val)
-        
+        row_scan_opt = QHBoxLayout(); row_scan_opt.addWidget(self.rb_scan_evt); row_scan_opt.addWidget(self.rb_scan_time)
+        self.spin_scan_val = QSpinBox(); self.spin_scan_val.setRange(1, 10000000); self.spin_scan_val.setValue(5000); row_scan_opt.addWidget(self.spin_scan_val)
         row_scan_opt.addWidget(QLabel("Idle(s):"))
-        self.spin_scan_rest = QSpinBox()
-        self.spin_scan_rest.setRange(0, 3600) 
-        self.spin_scan_rest.setValue(3)       
-        row_scan_opt.addWidget(self.spin_scan_rest)
-        
+        self.spin_scan_rest = QSpinBox(); self.spin_scan_rest.setRange(0, 3600); self.spin_scan_rest.setValue(3); row_scan_opt.addWidget(self.spin_scan_rest)
         scan_layout.addLayout(row_scan_opt)
         
         btn_s = QPushButton("🔄 Start Threshold Scan")
         btn_s.setStyleSheet("background-color: #FF9800; color: white; padding: 10px; font-weight:bold;")
         btn_s.clicked.connect(self.start_thr_scan); scan_layout.addWidget(btn_s); scan_layout.addStretch()
 
-        # [3] Long Run
         tab_subrun = QWidget(); subrun_layout = QVBoxLayout(tab_subrun)
         subrun_layout.setContentsMargins(8, 8, 8, 8); subrun_layout.setSpacing(6)
         subrun_layout.addWidget(QLabel("지정된 조건(시간/이벤트) 단위로 파일을 분할 수집합니다."))
@@ -370,15 +376,9 @@ class DAQControlCenter(QMainWindow):
         row4 = QHBoxLayout()
         self.spin_chunk_val = QSpinBox(); self.spin_chunk_val.setRange(1, 10000000); self.spin_chunk_val.setValue(60)
         self.spin_total_chunk = QSpinBox(); self.spin_total_chunk.setRange(1, 1000); self.spin_total_chunk.setValue(10)
-        row4.addWidget(QLabel("Value/Chunk:")); row4.addWidget(self.spin_chunk_val)
-        row4.addWidget(QLabel("Total Chunks:")); row4.addWidget(self.spin_total_chunk)
-        
+        row4.addWidget(QLabel("Value/Chunk:")); row4.addWidget(self.spin_chunk_val); row4.addWidget(QLabel("Total Chunks:")); row4.addWidget(self.spin_total_chunk)
         row4.addWidget(QLabel("Idle(s):"))
-        self.spin_long_rest = QSpinBox()
-        self.spin_long_rest.setRange(0, 3600)
-        self.spin_long_rest.setValue(5)       
-        row4.addWidget(self.spin_long_rest)
-        
+        self.spin_long_rest = QSpinBox(); self.spin_long_rest.setRange(0, 3600); self.spin_long_rest.setValue(5); row4.addWidget(self.spin_long_rest)
         subrun_layout.addLayout(row4)
         
         btn_sub = QPushButton("⏱️ Start Long Run")
@@ -389,28 +389,25 @@ class DAQControlCenter(QMainWindow):
         self.daq_tabs.addTab(tab_scan, "🔄 THR Scan")
         self.daq_tabs.addTab(tab_subrun, "⏱️ Long Run")
 
-    def update_config_summary(self):
-        path = self.combo_config.currentData()
-        if not path or not os.path.exists(path): return
-        summary = ""
-        with open(path, 'r') as f:
-            for line in f:
-                if line.strip().startswith("FADC"): summary += f"[보드] {line.strip()}\n"
-                elif line.strip().startswith("NDP"): summary += f"[포인트] {line.strip()}\n"
-                elif line.strip().startswith("TLT"): summary += f"[트리거] {line.strip()}\n"
-                elif line.strip().startswith("THR"): summary += f"[임계값] {line.strip()}\n"
-                elif line.strip().startswith("DLY"): summary += f"[지연] {line.strip()}\n"
-        self.txt_config_summary.setText(summary)
-
+    # 💡 [Phase 6] ZMQ 스레드 시작/종료 함수로 교체
     def start_monitor(self):
-        if self.monitor_process.state() != QProcess.Running:
-            self.monitor_process.start(os.path.join(CURRENT_DIR, EXE_MONITOR), [])
-            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display Process Started.")
-            
+        if not self.use_zmq_viewer:
+            self.zmq_thread.start()
+            self.use_zmq_viewer = True
+            self.print_log("\033[1;36m[ZMQ]\033[0m High-Speed Live Viewer Connected (Zero-Copy).")
+
     def stop_monitor(self):
-        if self.monitor_process.state() == QProcess.Running:
-            self.monitor_process.terminate()
-            self.print_log("\033[1;36m[MONITOR]\033[0m Online Display hidden/stopped.")
+        if self.use_zmq_viewer:
+            self.zmq_thread.stop()
+            self.use_zmq_viewer = False
+            self.plot_curve.clear()
+            self.print_log("\033[1;31m[ZMQ]\033[0m Disconnected from Viewer.")
+
+    def update_plot(self, waveforms):
+        if waveforms:
+            # 부하를 최소화하기 위해 수신된 여러 채널 중 첫 번째 채널의 파형만 그립니다.
+            first_ch = list(waveforms.keys())[0]
+            self.plot_curve.setData(waveforms[first_ch])
 
     def update_clock(self):
         self.clock_lbl.setText(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -429,7 +426,6 @@ class DAQControlCenter(QMainWindow):
         self.combo_config.clear()
         if os.path.exists(CONFIG_DIR):
             for cfg in glob.glob(os.path.join(CONFIG_DIR, "*.config")): self.combo_config.addItem(os.path.basename(cfg), cfg)
-        self.update_config_summary()
 
     def ansi_to_html(self, text):
         text = text.replace('<', '&lt;').replace('>', '&gt;')
@@ -440,8 +436,6 @@ class DAQControlCenter(QMainWindow):
         text = re.sub(r'\033\[1;35m(.*?)\033\[0m', r'<span style="color:#8E24AA; font-weight:bold;">\1</span>', text) 
         text = re.sub(r'\033\[1;36m(.*?)\033\[0m', r'<span style="color:#00838F; font-weight:bold;">\1</span>', text) 
         text = re.sub(r'\033\[1;37m(.*?)\033\[0m', r'<span style="color:#212121; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;41m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#D32F2F; font-weight:bold; padding:2px;">\1</span>', text) 
-        text = re.sub(r'\033\[1;45m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#8E24AA; font-weight:bold; padding:2px;">\1</span>', text) 
         text = re.sub(r'\033\[[\d;]*m', '', text) 
         return text
 
@@ -456,20 +450,6 @@ class DAQControlCenter(QMainWindow):
                 html_line = self.ansi_to_html(line)
                 self.log_viewer.append(html_line)
         self.log_viewer.moveCursor(QTextCursor.End)
-
-    def handle_mon_stdout(self):
-        raw_data = self.monitor_process.readAllStandardOutput().data().decode("utf8", errors="replace")
-        for line in raw_data.split('\n'):
-            for subline in line.split('\r'):
-                if subline.strip():
-                    self.print_log(f"\033[1;34m[MONITOR]\033[0m {subline.strip()}")
-
-    def handle_mon_stderr(self):
-        raw_data = self.monitor_process.readAllStandardError().data().decode("utf8", errors="replace")
-        for line in raw_data.split('\n'):
-            for subline in line.split('\r'):
-                if subline.strip():
-                    self.print_log(f"\033[1;31m[MON ERROR]\033[0m {subline.strip()}", is_error=True)
 
     def generate_scan_config(self, base_cfg, target_thr):
         with open(base_cfg, 'r') as f: lines = f.readlines()
@@ -491,9 +471,7 @@ class DAQControlCenter(QMainWindow):
         self.lbl_start_time.setText(f"Start: {self.daq_start_timestamp.strftime('%H:%M:%S')}")
         self.lbl_elapsed_time.setText("Elapsed: 00:00:00")
         self.lbl_trigger_rate.setText("Trigger Rate: 0.0 Hz")
-        
         self.final_events = "0"; self.final_time = "0.0"; self.final_rate = "0.0"
-        
         self.tabs.setEnabled(False); self.log_viewer.clear(); self.lcd_events.display(0)
         return True
 
@@ -511,7 +489,8 @@ class DAQControlCenter(QMainWindow):
         quality = self.combo_quality.currentText().split()[0]
         self.current_run_id = self.elog_panel.record_run(run_num, "MANUAL", run_tag, quality, self.input_desc.text())
         
-        out_root = os.path.join(self.data_output_dir, f"run_{run_num}.root") 
+        # 💡 [Phase 6] 확장자를 .dat 로 고정 
+        out_root = os.path.join(self.data_output_dir, f"run_{run_num}.dat") 
         args = ["-f", self.combo_config.currentData(), "-o", out_root]
         
         if self.rb_manual_evt.isChecked():
@@ -544,7 +523,9 @@ class DAQControlCenter(QMainWindow):
         self.lbl_dash_mode.setText(f"SCAN [THR={self.scan_current_val}]")
         
         self.current_run_id = self.elog_panel.record_run(run_str, "SCAN", "CALIBRATION", "PENDING", f"Auto Scan: THR={self.scan_current_val}")
-        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root") 
+        
+        # 💡 [Phase 6] 확장자를 .dat 로 고정 
+        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.dat") 
         
         args = ["-f", cfg_path, "-o", out_root]; val = self.spin_scan_val.value()
         if self.rb_scan_evt.isChecked():
@@ -574,7 +555,9 @@ class DAQControlCenter(QMainWindow):
         self.lbl_dash_mode.setText(f"LONG RUN [{self.current_subrun_idx}/{self.subrun_max_idx}]")
         
         self.current_run_id = self.elog_panel.record_run(run_str, "LONG_RUN", "PHYSICS", "PENDING", f"Chunk {self.current_subrun_idx}/{self.subrun_max_idx}")
-        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root")
+        
+        # 💡 [Phase 6] 확장자를 .dat 로 고정 
+        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.dat")
         
         args = ["-f", self.combo_config.currentData(), "-o", out_root]; val = self.spin_chunk_val.value()
         if self.rb_long_evt.isChecked():
@@ -647,7 +630,6 @@ class DAQControlCenter(QMainWindow):
             status_str = "COMPLETED"
             if hasattr(self, 'final_events') and self.final_events != "0":
                 status_str = f"COMPLETED | {self.final_events} evts | {self.final_time}s | {self.final_rate}Hz"
-            
             self.elog_panel.update_status(self.current_run_id, status_str)
         
         self.lbl_hw_status.setText("Hardware Status: Waiting for DAQ...")
@@ -676,12 +658,12 @@ class DAQControlCenter(QMainWindow):
             if reply == QMessageBox.Yes:
                 self.force_stop_daq()
                 if self.daq_process.state() == QProcess.Running: self.daq_process.waitForFinished(3000) 
-                if self.monitor_process.state() == QProcess.Running: self.monitor_process.terminate()
+                self.stop_monitor()
                 self.prod_panel.terminate_process() 
                 event.accept()
             else: event.ignore()
         else:
-            if self.monitor_process.state() == QProcess.Running: self.monitor_process.terminate()
+            self.stop_monitor()
             self.prod_panel.terminate_process() 
             event.accept()
 
