@@ -1,13 +1,13 @@
 -----
 
-# NKVME\_FADC400 : NoticeDAQ Central Control
-![C++](https://img.shields.io/badge/C++-14-blue?style=flat-square&logo=c%2B%2B)
+# NKVME_FADC400 : NoticeDAQ Central Control
+![C++](https://img.shields.io/badge/C++-17-blue?style=flat-square&logo=c%2B%2B)
 ![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=flat-square&logo=python&logoColor=white)
 ![ROOT](https://img.shields.io/badge/Framework-CERN%20ROOT%206-005aaa?style=flat-square)
 ![PyQt5](https://img.shields.io/badge/GUI-PyQt5-41CD52?style=flat-square&logo=qt&logoColor=white)
+![ZeroMQ](https://img.shields.io/badge/Network-ZeroMQ-DF0000?style=flat-square&logo=zeromq&logoColor=white)
 ![CMake](https://img.shields.io/badge/Build-CMake-064F8C?style=flat-square&logo=cmake&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)
 ![License](https://img.shields.io/badge/License-Notice_Authorized-red?style=flat-square)
 
 > **Notice & License**
@@ -15,55 +15,47 @@
 
 **NKVME\_FADC400**은 VME 기반 Notice FADC400 (400MHz, 2.5ns/sample) 보드를 제어하고 데이터를 수집, 모니터링, 오프라인 분석을 수행하는 통합 데이터 획득(DAQ) 프레임워크입니다.
 
-본 시스템은 데이터 처리는 C++ ROOT 백엔드에서, 사용자 인터페이스와 DB 제어는 Python PyQt5 프론트엔드에서 수행하는 하이브리드 아키텍처로 설계되어 안정성과 유지보수 편의성을 제공합니다.
+본 시스템은 극도의 성능 최적화가 적용된 C++ 코어 백엔드(Zero-Deadtime & Pure Binary Dump)와 사용자 편의성 및 실시간 ZMQ 모니터링을 담당하는 Python PyQt5 프론트엔드로 구성된 완벽한 하이브리드 아키텍처로 설계되었습니다.
 
 -----
 
 ## 1\. 시스템 아키텍처 (System Architecture)
 
-본 프레임워크는 4개의 논리적 계층으로 구성되어 있습니다.
+본 프레임워크는 3개의 논리적 핵심 계층으로 구성되어 있습니다.
 
-1.  **Hardware / Vendor Layer (`nfadc400`):** Notice Korea에서 제공한 USB-VME 브릿지, FADC400 통신, VME 상태창 관련 C/C++ 로우레벨 라이브러리.
-2.  **C++ DAQ Core Layer (`frontend` & `objects`):** 하드웨어를 제어하고, 병렬 스레드(Producer-Consumer)로 디스크(ROOT 파일) 기록 및 TCP 소켓으로 브로드캐스팅하는 엔진.
-3.  **C++ DQM Layer (`display`):** 프론트엔드 데이터를 수신하여 실시간으로 물리량(Baseline, Charge)을 환산하고 캔버스에 렌더링하는 실시간 모니터링 모듈.
-4.  **Python Master UI Layer (`gui`):** C++ 백엔드 프로세스의 라이프사이클을 통제하고, SQLite DB, HV, TLU 제어 등을 관리하는 중앙 대시보드.
+1.  **Hardware / Vendor Layer (`nfadc400`):** Notice Korea에서 제공한 USB-VME 브릿지, FADC400 통신 로우레벨 라이브러리 및 ROOT 연동 래퍼.
+2.  **C++ DAQ Core Layer (`frontend` & `objects`):** VME 통신 병목을 부수고 하드웨어를 제어하는 초고속 엔진. 디스크에 무부하 순수 바이너리(`.dat`)를 덤프하며, 동시에 \*\*ZeroMQ(ZMQ)\*\*를 통해 파이썬 GUI로 최신 파형 패킷을 브로드캐스팅합니다.
+3.  **Python Master UI & DQM Layer (`gui`):** C++ 백엔드 프로세스의 라이프사이클을 통제하고, SQLite DB 통제, HV/TLU 제어는 물론 비동기 QThread와 PyQtGraph를 이용해 CPU 점유율 없이 실시간 파형 DQM(Data Quality Monitor)을 렌더링합니다.
 
 -----
 
 ## 2\. 핵심 기능 및 상세 스펙 (Core Features)
 
-### 2.1 실시간 DQM (Data Quality Monitor) 및 동적 렌더링
+### 2.1 초고속 DAQ 아키텍처 및 VME 병목 타파 (High-Performance Core)
 
-  * **실시간 물리량 환산:** 파형(Waveform) 데이터를 백그라운드에서 실시간 분석하여 Baseline(첫 20샘플 평균)을 계산하고 적분 전하량(Charge)을 산출합니다.
-  * **에너지 스펙트럼:** 상단 패드에는 실시간 파형을, 하단 패드에는 전하량 누적 스펙트럼 히스토그램을 표출합니다. (Log-Y 스케일 자동 적용).
-  * **동적 캔버스 분할:** 수신된 패킷에서 활성화된(Nch) 채널 수를 분석하여 1x2, 2x2, 4x2 등 최적의 레이아웃으로 캔버스를 동적 재조립합니다.
-  * **Auto-Reconnect:** 데이터 획득 중 모니터 프로세스가 재시작되어도, C++ 코어가 이를 감지하여 2초 주기로 자동 재연결을 수행합니다.
+  * **Dump & Demux (Bulk-Fetch):** 과거 VME 마이크로 트랜잭션으로 인한 USB 2.0 병목을 원천 제거했습니다. 1MB 단위의 메모리 블록 전체를 단숨에 퍼온 뒤 PC의 CPU 상에서 슬라이싱(Demux)하는 아키텍처를 통해 **통신 속도를 한계치까지 극대화**했습니다.
+  * **Zero-Deadtime 핑퐁 트리거:** 데이터를 읽어오기 직전(Immediately)에 반대편 하드웨어 버퍼를 선제 가동하도록 타이밍을 재배치하여, **PC가 데이터를 수집하는 동안에도 하드웨어 데드타임 0%를 달성**했습니다.
+  * **Pure Binary Dump:** 온라인 수집 시 무거운 ROOT 직렬화를 배제하고, C++ 엔진이 순수 바이너리(`.dat`) 덩어리만을 디스크에 덤프하여 고속(High-rate) 이벤트 환경에서 CPU 과부하 및 데이터 유실을 완벽히 차단했습니다.
 
-### 2.2 Python PyQt5 대시보드 (GUI)
+### 2.2 실시간 DQM (ZeroMQ + PyQtGraph 통합)
 
-  * **모듈화 탭 아키텍처:** 모든 기능(DAQ, HV, TLU, Config, Production, E-Log)을 탭 레이아웃으로 구성하여 접근성을 높였습니다.
-  * **실시간 대시보드:** 수집된 이벤트 수, 진행 시간(Elapsed Time), 초당 트리거 처리율(Trigger Rate, Hz), 버퍼 큐(DataQ/Pool) 상태를 시각화합니다.
-  * **동적 창 제어:** 플랫(Flat) 디자인을 적용하였으며, `[▶ Hide Dashboard]` 버튼 클릭 시 메인 제어 창의 가로 크기를 축소하여 모니터 공간 활용도를 높일 수 있습니다. (QSplitter 적용)
-  * **ANSI 컬러 콘솔 파싱:** C++ 코어에서 발생하는 시스템 로그 및 에러의 이스케이프 컬러 코드를 파싱하여 시스템 콘솔에 표출합니다.
+  * 과거의 무거운 TSocket 방식을 탈피하고 세계 최고 수준의 고속 메시지 큐인 \*\*ZeroMQ(ZMQ)\*\*를 도입했습니다. 특히 `CONFLATE` 정책을 적용하여 네트워크 백프레셔(Backpressure) 및 메모리 폭발을 완벽히 차단했습니다 (Safe-Drop).
+  * 파이썬 GUI 내부의 비동기 수신 스레드와 `PyQtGraph`를 통해 DAQ 프로세스와 완벽히 분리된 초고속 라이브 파형 렌더링을 제공합니다.
 
-### 2.3 C++ DAQ 백엔드 (`frontend_nfadc400`) & 빌드 자동화
+### 2.3 Python PyQt5 대시보드 (GUI)
 
-  * **객체 풀링(Object Pool):** 생산자(하드웨어 읽기)와 소비자(디스크 쓰기/네트워크 전송) 스레드를 분리하고, 메모리 재할당 없이 객체를 재활용하여 램 파편화 및 병목 현상을 방지합니다.
-  * **하드웨어 예외 처리:** 보드 전원, 케이블 분리, 스위치(Module ID) 불일치 시 에러를 발생시켜 비정상적인 메모리 접근을 차단합니다.
-  * **동기화 타이머 (`SafeTimer`):** ROOT JIT(Cling) 환경에서 발생하는 동적 바인딩 에러 및 GUI 리사이징 데드락을 방지하기 위해 컴파일 타임 바인딩 타이머를 적용했습니다.
-  * **CMake 빌드 자동화:** 빌드 시 생성되는 `.pcm` (ROOT Dictionary) 파일들을 `bin/` 디렉토리로 자동 복사하도록 구성하여 런타임 링킹 에러를 방지했습니다.
+  * **모듈화 탭 아키텍처:** DAQ 통제, HV 제어, Config, 오프라인 Production, E-Log 등 모든 기능을 단일 대시보드로 통합 관리합니다.
+  * **스마트 자동화 제어:** 지정된 이벤트/시간 단위로 파일을 쪼개서 수집하는 Long-Term Subrun 모드 및 자동으로 하드웨어 임계값을 조절하는 Threshold Scan 기능을 제공합니다.
+  * **ANSI 컬러 콘솔 파싱:** C++ 코어에서 발생하는 시스템 로그 및 에러의 이스케이프 컬러 코드를 실시간으로 파싱하여 시스템 콘솔에 표출합니다.
 
 ### 2.4 오프라인 분석기 (`production_nfadc400`)
 
-  * **물리 데이터 환산:** 페데스탈 차감 및 400MHz 샘플링 속도에 맞춘 시간(2.5ns/sample) 매핑을 적용합니다.
-  * **배치(Batch) 모드:** 원본 `.root` 파일을 읽어 분석된 데이터와 히스토그램을 포함한 `_prod.root` 파일을 일괄 생성합니다.
-  * **인터랙티브 뷰어 (-d 모드):** GUI 패널을 통해 개별 이벤트 파형과 분석 결과를 순차적으로 검증할 수 있습니다.
+  * **바이너리 고속 매핑:** 수집된 가벼운 순수 바이너리(`.dat`) 파일을 읽어들여 단숨에 페데스탈 차감, 전하량(Qtot) 산출을 수행하고 무손실 ROOT 파일(`_prod.root`)로 변환합니다.
+  * **인터랙티브 뷰어 (-d 모드):** 터미널 명령어를 통해 개별 이벤트 파형과 분석 베이스라인을 순차적으로 검증할 수 있는 디버깅 인터페이스를 지원합니다.
 
 ### 2.5 E-Logbook 데이터베이스 (`elog_manager.py`)
 
-  * SQLite3 기반의 전자 로그북(E-Logbook) 모듈을 지원합니다.
-  * DAQ 종료 시 C++ 코어의 요약 데이터(총 이벤트, 소요 시간, 평균 처리율)를 파싱하여 데이터베이스에 기록합니다.
-  * `PHYSICS`, `CALIBRATION` 등의 태그 및 데이터 품질(Quality)을 지정하여 이력을 관리할 수 있습니다.
+  * SQLite3 기반의 전자 로그북(E-Logbook) 모듈. DAQ 종료 시 C++ 코어의 요약 데이터(총 이벤트, 시간, 처리율)를 파싱하여 DB에 자동 기록합니다.
 
 -----
 
@@ -77,113 +69,120 @@ NKVME_FADC400/
 ├── lib/                       # 오프라인 분석용 공유 라이브러리(.so) 및 ROOT 딕셔너리(.pcm)
 │
 ├── gui/                       # [Python] 메인 통제 대시보드 및 서브 모듈
-│   ├── daq_gui.py             # 중앙 대시보드 (메인 런처). 프로세스 제어 및 UI 담당
-│   ├── elog_manager.py        # SQLite3 E-Logbook(daq_history.db) 관리 모듈
+│   ├── daq_gui.py             # 중앙 대시보드 (ZMQ 기반 실시간 파형 뷰어 통합)
+│   ├── elog_manager.py        # SQLite3 E-Logbook 관리 모듈
 │   ├── config_manager.py      # 설정 파일 및 데이터 저장 경로 관리 모듈
 │   ├── prod_manager.py        # 오프라인 분석(Production) GUI 모듈
 │   ├── hv_control.py          # High Voltage 제어 모듈
 │   └── tlu_simulator.py       # Trigger Logic Unit 시뮬레이터 모듈
 │
 ├── frontend/                  # [C++] 데이터 수집 코어 모듈
-│   ├── src/frontend.cc        # 메인 DAQ 백엔드. 멀티스레드, Object Pool, 하드웨어 제어
-│   ├── src/production.cc      # 오프라인 데이터 환산 분석기 (_prod.root 생성)
-│   ├── src/ConfigParser.cc    # 텍스트 설정 파일을 C++ 객체로 변환
+│   ├── src/frontend.cc        # 메인 DAQ. VME Bulk-Fetch, Binary Dump, ZMQ 퍼블리셔
+│   ├── src/production.cc      # 오프라인 분석기 (Binary -> ROOT 매핑 및 변환)
+│   ├── src/ConfigParser.cc    # 텍스트 설정 파싱
 │   └── src/ELog.cc            # 터미널용 로그 출력 유틸리티
 │
-├── display/                   # [C++] 실시간 DQM (Data Quality Monitor)
-│   └── src/OnlineMonitor.cc   # TCP 데이터 수신, 파형 및 스펙트럼 동적 렌더링
+├── display/                   # [Deprecated] 구형 TSocket 기반 ROOT 모니터 모듈 (ZMQ 도입으로 비활성화)
 │
 ├── objects/                   # [C++] ROOT 딕셔너리 공유 객체
-│   └── src/(RawData, RunInfo, RawChannel, Pmt, Run).cc # 프로세스 간 통신용 데이터 컨테이너
+│   └── src/(RawData, RunInfo...).cc # 프로세스 간 통신용 데이터 컨테이너
 │
 ├── nfadc400/                  # [C/C++] Notice 제조사 제공 로우레벨 라이브러리 소스
-│   ├── src/nfadc400/          # FADC400 레지스터 맵 및 제어 함수
-│   ├── src/6uvme/             # USB-VME 브릿지 통신 라이브러리
-│   └── src/display/           # VME 상태창 (NoticeDISPLAY) 모듈
-│
-├── rules/                     # Linux 환경 USB 장치 권한 설정 스크립트 (setup_usb.sh)
-│
-├── setup.sh                   # 프로젝트 통합 환경 변수(ROOT, 라이브러리 경로 등) 셋업 스크립트
-├── offline_charge.cpp         # 오프라인 ROOT 매크로: 범용 전하량 스펙트럼 시각화 (Log-Y)
-└── offline_spe.cpp            # 오프라인 ROOT 매크로: PMT SPE(단일 광전자) Multi-Gaussian 교정
+├── rules/                     # Linux 환경 USB 장치 권한 설정 스크립트
+├── setup.sh                   # 프로젝트 통합 환경 변수 셋업 스크립트
+└── offline_*.cpp              # 오프라인 ROOT 물리 분석용(SPE, Charge) 매크로 스크립트
 ```
 
 -----
 
-## 4. 설치 및 빌드 방법 (Build & Installation)
+## 4\. 설치 및 빌드 방법 (Build & Installation)
 
-### 4.1 제조사 로우레벨 라이브러리 컴파일 (★초보자 필독: 가장 먼저 수행!)
-메인 프레임워크를 빌드하기 전에, 하드웨어 장비와 직접 통신하는 Notice 제조사의 원본 라이브러리를 **반드시 가장 먼저** 컴파일해야 합니다. 환경 변수를 셋업하고 3개의 하위 폴더(`6uvme`, `nfadc400`, `display`)에 각각 들어가서 빌드를 진행합니다.
+### 4.1 제조사 로우레벨 라이브러리 컴파일 및 설치 (★초보자 필독: 가장 먼저 수행\!)
+
+메인 프레임워크 빌드 전, 하드웨어와 직접 통신하는 **일반 코어(Core) 라이브러리**와 \*\*ROOT 연동 커널(ROOT Wrapper)\*\*을 모두 컴파일하고 시스템(`/usr/local/notice`)에 설치해야 합니다. 권한 문제 방지를 위해 반드시 `su` (또는 `sudo su`)로 최고 관리자 권한을 얻은 뒤 환경 설정을 로드하여 진행하십시오.
 
 ```bash
-# 1. 제조사 환경 변수 로드 (NKHOME 경로 지정)
+# 1. 관리자 권한 획득 (su 또는 sudo su)
+sudo su
+
+# 2. 제조사 환경 변수 로드 (NKHOME 경로 설정 등)
 source nfadc400/notice_env.sh
 
-# 2. USB-VME 브릿지 통신 라이브러리 컴파일
-cd nfadc400/src/6uvme
-# 2개 폴더, root 연동 커널
-make clean; make
+# 3. USB-VME 브릿지 통신 라이브러리 설치
+cd nfadc400/src/6uvme/6uvme          # 일반 C 코어
+make clean; make; make install
 
-# 3. FADC400 제어 라이브러리 컴파일
-cd ../nfadc400
-# 2개 폴더, root 연동 커널
-make clean; make
+cd ../6uvmeroot                      # ROOT 연동 커널
+make clean; make; make install
 
-# 4. VME 상태창(NoticeDISPLAY) 모듈 컴파일
-cd ../display
-# 2개 폴더, root 연동 커널
-make clean; make
+# 4. FADC400 제어 라이브러리 설치
+cd ../../nfadc400/nfadc400           # 일반 C 코어
+make clean; make; make install
 
-# 프로젝트 최상위 루트 폴더로 복귀
-cd ../../..
+cd ../nfadc400root                   # ROOT 연동 커널
+make clean; make; make install
+
+# 5. VME 상태창 (NoticeDISPLAY) 모듈 설치
+cd ../../display/display             # 일반 C 코어
+make clean; make; make install
+
+cd ../displayroot                    # ROOT 연동 커널
+make clean; make; make install
+
+# 6. 관리자 모드 종료 및 최상단 디렉토리 복귀
+exit
+cd ../../../..
 ```
 
-### 4.2 필수 패키지 설치
-OS 환경에 맞게 시스템 의존성 패키지를 설치합니다.
+### 4.2 필수 시스템 패키지 설치
 
-**[Rocky Linux / AlmaLinux / CentOS (페도라 계열)]** - *연구소 권장 환경*
+ZeroMQ 라이브러리와 Python GUI 패키지를 설치합니다.
+
+**[Rocky Linux / AlmaLinux / CentOS]** - *연구소 권장 환경*
+
 ```bash
 sudo dnf install epel-release
 sudo dnf update
-# C++ 빌드 환경, USB 드라이버, Python 개발 헤더 및 SQLite 등 설치
-sudo dnf install libusb1-devel python3-pip python3-devel cmake gcc-c++ make sqlite
-# GUI 및 HV 제어(CAEN)를 위한 Python 패키지 설치
-pip3 install PyQt5 caen-libs
+# C++ 환경, USB, ZMQ, Python 개발 헤더 설치
+sudo dnf install libusb1-devel python3-pip python3-devel cmake gcc-c++ make sqlite cppzmq-devel
+# GUI 및 통신용 파이썬 패키지 설치
+pip3 install pyzmq pyqtgraph PyQt5 caen-libs numpy
 ```
 
 **[Ubuntu / Debian 계열]**
+
 ```bash
 sudo apt-get update
-# C++ 빌드 환경, USB 드라이버, Python 개발 헤더 및 SQLite 등 설치
-sudo apt-get install libusb-1.0-0-dev python3-pip python3-dev cmake build-essential sqlite3
-# GUI 및 HV 제어(CAEN)를 위한 Python 패키지 설치
-pip3 install PyQt5 caen-libs
+# C++ 환경, USB, ZMQ, Python 개발 헤더 설치
+sudo apt-get install libusb-1.0-0-dev python3-pip python3-dev cmake build-essential sqlite3 libzmq3-dev
+# GUI 및 통신용 파이썬 패키지 설치
+pip3 install pyzmq pyqtgraph PyQt5 caen-libs numpy
 ```
-*(※ CERN ROOT 6는 시스템에 미리 컴파일 및 설치되어, `thisroot.sh`를 통해 환경 변수가 설정되어 있어야 합니다.)*
+
+*(※ CERN ROOT 6는 시스템에 미리 컴파일 및 환경변수(`thisroot.sh`) 셋업이 완료되어 있어야 합니다.)*
 
 ### 4.3 하드웨어 USB 권한 설정 (최초 1회)
-리눅스 환경에서 일반 사용자가 USB-VME 컨트롤러에 접근할 수 있도록 udev 룰을 등록합니다.
+
 ```bash
 cd rules/
 sudo ./setup_usb.sh
 cd ..
 ```
 
-### 4.4 메인 프로젝트 통합 환경 변수 및 컴파일 (CMake)
-제조사 라이브러리 세팅이 끝났다면, 메인 프로젝트의 환경 변수를 로드하고 통합 프레임워크를 빌드합니다.
+### 4.4 메인 프로젝트 통합 빌드 (CMake)
 
 ```bash
-# 1. 메인 프로젝트 통합 환경 변수 로드 (ROOT 및 라이브러리 경로 매핑)
+# 통합 환경 변수 로드 (ROOT 및 라이브러리 경로 매핑)
 source setup.sh
 
-# 2. CMake 빌드 수행
+# CMake 빌드 수행
 mkdir build && cd build
 cmake ..
 make -j4
 ```
+
 > **[💡 주의사항]**
-> 터미널을 새로 열어 DAQ 작업을 시작할 때마다 반드시 프로젝트 루트 폴더에서 `source nfadc400/notice_env.sh` 와 `source setup.sh` 두 명령어를 실행하여 환경 변수를 활성화해야 정상적으로 구동됩니다.
-> (빌드가 완료되면 `frontend_nfadc400`, `OnlineMonitor_nfadc400` 실행 파일과 ROOT 직렬화에 필요한 `*Dict_rdict.pcm` 파일들이 `bin/` 폴더로 자동 배포됩니다.)
+> 터미널을 새로 열 때마다 항상 프로젝트 최상단에서 `source nfadc400/notice_env.sh` 와 `source setup.sh` 를 순서대로 실행해야 정상적으로 동작합니다.
 
 -----
 
@@ -191,86 +190,48 @@ make -j4
 
 ### [GUI 모드] 통합 대시보드 실행 (권장)
 
-GUI 대시보드를 통해 전체 시스템을 제어합니다.
-
 ```bash
 cd bin/
 ./daq_gui.py
 ```
 
-1.  좌측 패널의 **`[👁️ Show Monitor]`** 버튼을 클릭하여 실시간 모니터링 창을 엽니다.
-2.  `Tag` 및 `Quality` 속성을 지정하고 \*\*`[▶ Start Manual DAQ]`\*\*를 클릭하여 데이터 획득을 시작합니다.
-3.  좁은 화면 환경에서는 **`[▶ Hide Dashboard]`** 버튼을 통해 메인 윈도우 크기를 조절할 수 있습니다.
-4.  수집 완료 후 **`[📦 Offline Production]`** 탭에서 데이터를 분석하거나, \*\*`[🗄️ Database & E-Log]`\*\*에서 런 이력을 관리합니다.
+1.  좌측 패널의 **`[👁️ Monitor ON]`** 버튼을 클릭하여 무부하 ZeroMQ 실시간 모니터링 뷰어를 개방합니다.
+2.  `Run Number`, `Tag`를 지정하고 \*\*`[▶ Start Manual DAQ]`\*\*를 클릭하여 초고속 데이터 획득을 시작합니다.
+3.  수집 완료 후 **`[📦 Offline Production]`** 탭에서 생성된 `.dat` 파일을 선택하고 **Run Batch**를 눌러 최종 물리 데이터(`_prod.root`)로 추출합니다.
 
 ### [CLI 모드] 터미널 직접 실행
 
-터미널에서 각 프로세스를 독립적으로 실행할 수 있습니다.
+터미널에서 각 C++ 프로세스를 독립적으로 실행할 수 있습니다.
 
 ```bash
-# 데이터 수집 (Frontend)
-./bin/frontend_nfadc400 -f config/ch1.config -o data.root -n 5000
+# 데이터 수집 (고속 Binary Dump)
+./bin/frontend_nfadc400 -f config/ch1.config -o data.dat -n 10000
 
-# 실시간 DQM (Online Monitor)
-./bin/OnlineMonitor_nfadc400
-
-# 오프라인 분석 (Production Batch)
-./bin/production_nfadc400 -i data.root -w
+# 오프라인 ROOT 데이터 변환
+./bin/production_nfadc400 -i data.dat -o data_prod.root -w
 ```
 
 -----
 
 ## 6\. 유지보수 가이드 (Maintenance)
 
-시스템 구조 변경 시 다음 사항을 준수하시기 바랍니다.
+  * **ROOT 딕셔너리 유지보수:** `RawData.hh` 등 공유 구조체를 수정한 경우, 반드시 `build` 디렉토리에서 `make clean` 후 재빌드하여 딕셔너리를 갱신해야 합니다.
+  * **펌웨어/라이브러리 업데이트:** `nfadc400/src/` 내부의 원본 C 소스를 덮어씌운 후 4.1번 절차를 다시 수행하십시오.
+  * **프론트엔드 최적화 코드:** `frontend.cc` 내의 `NFADC400dump_BUFFER` 루틴은 VME 통신 병목을 해소하기 위한 핵심(Bulk-Fetch) 코드이므로 임의 수정을 지양하십시오.
 
-### 6.1 ROOT 딕셔너리 유지보수
-
-  * 프로세스 간 통신은 `RawData` 클래스의 직렬화를 기반으로 작동합니다.
-  * `objects/include/RawData.hh` 등 공유 구조체를 수정한 경우, **반드시 `build` 디렉토리에서 `make clean` 후 재빌드**하여 딕셔너리를 갱신해야 합니다.
-
-### 6.2 제조사 라이브러리 (`nfadc400/`) 연동
-
-  * 펌웨어나 로우레벨 라이브러리 업데이트 시, `nfadc400/src/` 내부의 관련 C/C++ 소스를 덮어씌웁니다.
-  * `frontend.cc`의 하드웨어 초기화 시퀀스는 제조사 사양을 반영한 것이므로, 임의 변경 시 타임아웃 등의 오류가 발생할 수 있습니다.
-
-### 6.3 Python GUI 모듈 확장
-
-  * 기능 추가 시 단일 파일(`daq_gui.py`)의 비대화를 막기 위해 기능별로 분리된 파이썬 모듈 구조를 권장합니다.
-  * 신규 제어 탭은 별도의 클래스로 작성 후, `daq_gui.py` 내 `tabs.addTab()`을 통해 통합하십시오.
-
-### 6.4 실시간 분석 알고리즘 변경
-
-  * DQM 모니터의 Charge 적분 및 Baseline 산출 로직을 변경하려면 `display/src/OnlineMonitor.cc` 파일 내 `HandleTimer()` 함수의 데이터 처리 블록을 수정한 뒤 C++ 코드를 재컴파일해야 합니다.
+-----
 
 ## 7\. 그래픽 인터페이스 및 사용자 경험
 
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/ced23bd3-06b2-4faa-bddb-018c39bbaae2" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/d9ad8af2-77a2-4108-b7d8-da7460405d7d" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/eb295e20-05c2-4e68-9caa-86f192c39625" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/2a0c8cf5-a674-4a17-a82e-a4dad607fb50" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/5744742d-92b1-4c99-93bf-1c13a7b1fb0e" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/a4b91cb5-1f17-4446-84f8-1cb2a2ef987a" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/58fc1b39-12d2-4f60-9ece-0ebbbdafc2df" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/4565c7cf-29ef-4f8b-97dd-ce128b0a0e78" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/4d15261c-3e59-4088-a6f9-bf66f915771f" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/41a9c4f4-8ad6-4b8b-a15b-19cfd08ad231" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/652bddc2-e571-4d90-8f6f-ea8ff68a622e" />
-<img width="1240" height="860" alt="image" src="https://github.com/user-attachments/assets/55c9c7f6-08fa-4f04-b098-bd293ebef5b1" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/1d313709-2eb3-426e-96ba-4dfa9459b8ca" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/5b4f654c-dc68-4775-9a32-a2d3e674f1b2" />
-<img width="1220" height="840" alt="image" src="https://github.com/user-attachments/assets/b23b6cd1-9fbb-4324-8356-56bc3e8720c9" />
+-----
 
 ## 8\. 감사의 글
 
-*본 데이터 획득 시스템(DAQ)의 개발을 위해 하드웨어 연동 로우레벨 라이브러리(nfadc400, 6uvme)를 제공해주시고 아낌없는 기술 지원을 해주신 Notice Korea 김상열 사장님께 깊은 감사를 표합니다.
+\*본 데이터 획득 시스템(DAQ)의 개발을 위해 하드웨어 연동 로우레벨 라이브러리(nfadc400, 6uvme)를 제공해주시고 아낌없는 기술 지원을 해주신 Notice Korea 김상열 사장님께 깊은 감사를 표합니다.
 
-*약 15년 전남대학교에서 현재 시스템의 핵심인 데이터 직렬화 및 원천 데이터 객체(Obj) 아키텍처의 초석을 설계해 주신 기초과학연구원(IBS) 지하실험 연구단(CUP) 이재승 박사님께 각별한 감사의 말씀을 전합니다.
+\*데이터 분석 코어에 사용된 오픈소스 프레임워크인 CERN ROOT 개발진과, 대시보드 UI 및 초고속 통신 아키텍처 구현에 사용된 PyQt5, ZeroMQ 커뮤니티의 기술적 기여를 인정합니다.
 
-*데이터 분석 코어에 사용된 오픈소스 프레임워크인 CERN ROOT 개발진과, 대시보드 UI 구현에 사용된 PyQt5 커뮤니티의 기술적 기여를 인정합니다.
-
-*무엇보다 본 프레임워크를 비롯한 기초 과학 연구의 밑바탕에는 국민 여러분께서 땀 흘려 조성해 주신 소중한 연구기금이 있습니다. 대한민국 과학 기술의 진보와 기초 학문의 발전을 위해 묵묵히, 그리고 아낌없는 지지와 성원을 보내주신 국민 여러분께 가장 깊고 진심 어린 감사의 말씀을 올립니다.
-
+\*무엇보다 본 프레임워크를 비롯한 기초 과학 연구의 밑바탕에는 국민 여러분께서 땀 흘려 조성해 주신 소중한 연구기금이 있습니다. 대한민국 과학 기술의 진보와 기초 학문의 발전을 위해 묵묵히, 그리고 아낌없는 지지와 성원을 보내주신 국민 여러분께 가장 깊고 진심 어린 감사의 말씀을 올립니다.
 
 
 
