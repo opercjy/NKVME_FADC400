@@ -102,14 +102,35 @@ NKVME_FADC400/
 
 -----
 
-## 4\. 설치 및 빌드 방법 (Build & Installation)
+## 4. 설치 및 빌드 방법 (Build & Installation)
 
-### 4.1 필수 패키지 설치
+### 4.1 제조사 로우레벨 라이브러리 컴파일 (★초보자 필독: 가장 먼저 수행!)
+메인 프레임워크를 빌드하기 전에, 하드웨어 장비와 직접 통신하는 Notice 제조사의 원본 라이브러리를 **반드시 가장 먼저** 컴파일해야 합니다. 환경 변수를 셋업하고 3개의 하위 폴더(`6uvme`, `nfadc400`, `display`)에 각각 들어가서 빌드를 진행합니다.
 
-OS 환경에 맞게 의존성 패키지를 설치합니다.
+```bash
+# 1. 제조사 환경 변수 로드 (NKHOME 경로 지정)
+source nfadc400/notice_env.sh
+
+# 2. USB-VME 브릿지 통신 라이브러리 컴파일
+cd nfadc400/src/6uvme
+make clean; make
+
+# 3. FADC400 제어 라이브러리 컴파일
+cd ../nfadc400
+make clean; make
+
+# 4. VME 상태창(NoticeDISPLAY) 모듈 컴파일
+cd ../display
+make clean; make
+
+# 프로젝트 최상위 루트 폴더로 복귀
+cd ../../..
+```
+
+### 4.2 필수 패키지 설치
+OS 환경에 맞게 시스템 의존성 패키지를 설치합니다.
 
 **[Rocky Linux / AlmaLinux / CentOS (페도라 계열)]** - *연구소 권장 환경*
-
 ```bash
 sudo dnf install epel-release
 sudo dnf update
@@ -120,7 +141,6 @@ pip3 install PyQt5 caen-libs
 ```
 
 **[Ubuntu / Debian 계열]**
-
 ```bash
 sudo apt-get update
 # C++ 빌드 환경, USB 드라이버, Python 개발 헤더 및 SQLite 등 설치
@@ -128,27 +148,31 @@ sudo apt-get install libusb-1.0-0-dev python3-pip python3-dev cmake build-essent
 # GUI 및 HV 제어(CAEN)를 위한 Python 패키지 설치
 pip3 install PyQt5 caen-libs
 ```
-
 *(※ CERN ROOT 6는 시스템에 미리 컴파일 및 설치되어, `thisroot.sh`를 통해 환경 변수가 설정되어 있어야 합니다.)*
 
-### 4.2 하드웨어 USB 권한 설정 (최초 1회)
-
-USB-VME 컨트롤러 접근 권한을 설정하기 위해 udev 룰을 등록합니다.
-
+### 4.3 하드웨어 USB 권한 설정 (최초 1회)
+리눅스 환경에서 일반 사용자가 USB-VME 컨트롤러에 접근할 수 있도록 udev 룰을 등록합니다.
 ```bash
 cd rules/
 sudo ./setup_usb.sh
+cd ..
 ```
 
-### 4.3 C++ 프로젝트 컴파일 (CMake)
+### 4.4 메인 프로젝트 통합 환경 변수 및 컴파일 (CMake)
+제조사 라이브러리 세팅이 끝났다면, 메인 프로젝트의 환경 변수를 로드하고 통합 프레임워크를 빌드합니다.
 
 ```bash
+# 1. 메인 프로젝트 통합 환경 변수 로드 (ROOT 및 라이브러리 경로 매핑)
+source setup.sh
+
+# 2. CMake 빌드 수행
 mkdir build && cd build
 cmake ..
 make -j4
 ```
-
-> **[참고]** 빌드가 완료되면 `frontend_nfadc400`, `OnlineMonitor_nfadc400` 실행 파일과 ROOT 직렬화에 필요한 `*Dict_rdict.pcm` 파일들이 `bin/` 폴더로 자동 복사됩니다.
+> **[💡 주의사항]**
+> 터미널을 새로 열어 DAQ 작업을 시작할 때마다 반드시 프로젝트 루트 폴더에서 `source nfadc400/notice_env.sh` 와 `source setup.sh` 두 명령어를 실행하여 환경 변수를 활성화해야 정상적으로 구동됩니다.
+> (빌드가 완료되면 `frontend_nfadc400`, `OnlineMonitor_nfadc400` 실행 파일과 ROOT 직렬화에 필요한 `*Dict_rdict.pcm` 파일들이 `bin/` 폴더로 자동 배포됩니다.)
 
 -----
 
