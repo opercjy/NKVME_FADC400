@@ -25,14 +25,13 @@ link_directories(${NKHOME}/lib)
 # 하위 C++ 모듈 빌드
 add_subdirectory(objects)
 add_subdirectory(frontend)
-add_subdirectory(display)
+# add_subdirectory(display)  # 💡 [Phase 6] 구형 ROOT OnlineMonitor 모듈 폐기 (ZMQ GUI로 대체)
 
 # 설정 파일 및 시스템 룰 폴더 복사
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/rules DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
-# [핵심] GUI 파이썬 스크립트들을 모두 bin 폴더로 복사하고 실행 권한(+x) 자동 부여
-# 기존 부분에서 config_manager.py 한 줄만 추가!
+# GUI 파이썬 스크립트들을 모두 bin 폴더로 복사하고 실행 권한(+x) 자동 부여
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/gui/daq_gui.py 
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/hv_control.py 
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/tlu_simulator.py
