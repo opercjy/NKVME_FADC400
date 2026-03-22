@@ -389,7 +389,7 @@ class DAQControlCenter(QMainWindow):
         self.daq_tabs.addTab(tab_scan, "🔄 THR Scan")
         self.daq_tabs.addTab(tab_subrun, "⏱️ Long Run")
 
-    # 💡 [Phase 6] ZMQ 스레드 시작/종료 함수로 교체
+    # 💡 [Phase 6] ZMQ 스레드 제어 및 파형 업데이트
     def start_monitor(self):
         if not self.use_zmq_viewer:
             self.zmq_thread.start()
@@ -405,7 +405,6 @@ class DAQControlCenter(QMainWindow):
 
     def update_plot(self, waveforms):
         if waveforms:
-            # 부하를 최소화하기 위해 수신된 여러 채널 중 첫 번째 채널의 파형만 그립니다.
             first_ch = list(waveforms.keys())[0]
             self.plot_curve.setData(waveforms[first_ch])
 
@@ -480,6 +479,7 @@ class DAQControlCenter(QMainWindow):
         self.print_log("\033[1;36m[AUTO]\033[0m Manual DAQ target time reached. Graceful shutdown...", is_error=True)
         self.daq_process.terminate()
 
+    # 💡 [Phase 6 최종 버그 수정] -t 아규먼트 추가 및 파이썬 타이머 여유(Grace) 부여
     def start_manual_daq(self):
         if not self.pre_start_check(): return
         self.auto_mode = "NONE"; run_num = self.input_runnum.text().strip()
@@ -489,7 +489,6 @@ class DAQControlCenter(QMainWindow):
         quality = self.combo_quality.currentText().split()[0]
         self.current_run_id = self.elog_panel.record_run(run_num, "MANUAL", run_tag, quality, self.input_desc.text())
         
-        # 💡 [Phase 6] 확장자를 .dat 로 고정 
         out_root = os.path.join(self.data_output_dir, f"run_{run_num}.dat") 
         args = ["-f", self.combo_config.currentData(), "-o", out_root]
         
@@ -500,8 +499,9 @@ class DAQControlCenter(QMainWindow):
         elif self.rb_manual_time.isChecked():
             val = self.spin_manual_val.value()
             self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ will stop after {val} seconds.")
+            args.extend(["-t", str(val)]) # C++ 엔진에 -t 파라미터 전달!
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
-            self.manual_timer.start(val * 1000)
+            self.manual_timer.start((val + 2) * 1000) # 파이썬 강제종료 타이머는 2초의 여유를 줌
         else:
             self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ running continuously. (Press ABORT to end)")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
@@ -524,7 +524,6 @@ class DAQControlCenter(QMainWindow):
         
         self.current_run_id = self.elog_panel.record_run(run_str, "SCAN", "CALIBRATION", "PENDING", f"Auto Scan: THR={self.scan_current_val}")
         
-        # 💡 [Phase 6] 확장자를 .dat 로 고정 
         out_root = os.path.join(self.data_output_dir, f"run_{run_str}.dat") 
         
         args = ["-f", cfg_path, "-o", out_root]; val = self.spin_scan_val.value()
@@ -533,8 +532,9 @@ class DAQControlCenter(QMainWindow):
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
         else:
             self.print_log(f"\n\033[1;36m[AUTO]\033[0m Scan Step: THR={self.scan_current_val} ({val} Sec timeout)")
+            args.extend(["-t", str(val)]) # C++ 엔진에 -t 파라미터 전달!
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
-            self.scan_timer.start(val * 1000)
+            self.scan_timer.start((val + 2) * 1000)
 
     def trigger_scan_timeout(self):
         self.scan_timer.stop()
@@ -556,7 +556,6 @@ class DAQControlCenter(QMainWindow):
         
         self.current_run_id = self.elog_panel.record_run(run_str, "LONG_RUN", "PHYSICS", "PENDING", f"Chunk {self.current_subrun_idx}/{self.subrun_max_idx}")
         
-        # 💡 [Phase 6] 확장자를 .dat 로 고정 
         out_root = os.path.join(self.data_output_dir, f"run_{run_str}.dat")
         
         args = ["-f", self.combo_config.currentData(), "-o", out_root]; val = self.spin_chunk_val.value()
@@ -565,8 +564,9 @@ class DAQControlCenter(QMainWindow):
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
         else:
             self.print_log(f"\n\033[1;36m[AUTO]\033[0m Long Run Chunk {self.current_subrun_idx} ({val} Min timeout)...")
+            args.extend(["-t", str(val * 60)]) # 💡 분(Min) 단위를 초(Sec)로 변환하여 전달!
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
-            self.subrun_timer.start(val * 60 * 1000)
+            self.subrun_timer.start((val * 60 + 2) * 1000)
 
     def trigger_subrun_rotation(self):
         self.subrun_timer.stop()
