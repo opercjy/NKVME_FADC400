@@ -45,7 +45,7 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
 
     TSocket* socket = nullptr;
     auto lastNetTime = std::chrono::steady_clock::now();
-    auto lastConnTry = std::chrono::steady_clock::now(); // [핵심] 재연결 타이머
+    auto lastConnTry = std::chrono::steady_clock::now(); 
 
     if (useDisplay) {
         socket = new TSocket("localhost", 9090);
@@ -69,10 +69,6 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
 
             auto now = std::chrono::steady_clock::now();
 
-            // =====================================================================
-            // [핵심 픽스] 모니터 자동 재연결 (Auto-Reconnect) 로직
-            // 모니터가 중간에 꺼지거나 다시 켜지면 2초마다 감지하여 연결 복구
-            // =====================================================================
             if (useDisplay && (!socket || !socket->IsValid())) {
                 if (std::chrono::duration_cast<std::chrono::seconds>(now - lastConnTry).count() >= 2) {
                     if (socket) { delete socket; socket = nullptr; }
@@ -86,13 +82,11 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
                 }
             }
 
-            // 모니터로 데이터 전송
             if (socket && socket->IsValid() && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
                 TMessage mess(kMESS_OBJECT);
                 mess.WriteObject(treeEvtData);
                 int snd = socket->Send(mess);
                 
-                // [핵심 픽스] 전송 실패 시(모니터 창이 닫힘) 소켓 파기 및 다음 루프에서 재연결 유도
                 if (snd <= 0) { 
                     socket->Close();
                     delete socket;
@@ -251,7 +245,10 @@ int main(int argc, char ** argv) {
                     
                     fadc.NFADC400read_BUFFER(bd->MID(), cid, recordLength, page, raw_buffer);
                     
-                    RawChannel* chObj = eventData->AddChannel(bd->CID(j), dataPoints);
+                    // [버그 픽스] 다중 보드 사용 시 채널 ID 겹침 현상 원천 차단
+                    int global_chId = (bd->MID() * 4) + bd->CID(j);
+                    RawChannel* chObj = eventData->AddChannel(global_chId, dataPoints);
+                    
                     for (int k = 0; k < dataPoints; k++) {
                         chObj->AddSample(raw_buffer[k]);
                     }
