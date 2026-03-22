@@ -5,11 +5,12 @@
 #include <unistd.h>
 #include <chrono> 
 #include <cstring>
+#include <iomanip>
 
 #include "TROOT.h"
 #include "TStopwatch.h"
 #include "TError.h"      
-#include <zmq.hpp> // 💡 [Phase 6] ZMQ 헤더 추가
+#include <zmq.hpp> 
 
 #include "ThreadSafeQueue.hh"
 #include "ConfigParser.hh"
@@ -30,8 +31,10 @@ void SigIntHandler(int /*signum*/) {
     g_dataQueue.Stop(); 
 }
 
-// 💡 [Phase 6 핵심] TTree와 TSocket을 버리고 Pure Binary Dump 및 ZMQ 통신 적용
-void ConsumerWorker(const char* outFileName, bool useDisplay) {
+// -------------------------------------------------------------------------
+// Consumer: 순수 바이너리 디스크 덤프 + ZMQ 브로드캐스팅 + 💡 0.5초 정밀 상태 출력
+// -------------------------------------------------------------------------
+void ConsumerWorker(const char* outFileName) {
     FILE* fp = fopen(outFileName, "wb");
     if(!fp) {
         ELog::Print(ELog::FATAL, Form("Cannot create binary file: %s", outFileName));
@@ -39,67 +42,108 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
         return;
     }
 
-    // ZMQ 퍼블리셔 셋업 (스레드 내부에서 독립적으로 바인딩)
+    // ZMQ 브로드캐스터 (GUI 연결 대기)
     zmq::context_t ctx(1);
     zmq::socket_t publisher(ctx, ZMQ_PUB);
-    if (useDisplay) {
-        int conflate = 1;
-        publisher.setsockopt(ZMQ_CONFLATE, &conflate, sizeof(conflate));
-        publisher.bind("tcp://127.0.0.1:5556"); // FADC400용 ZMQ 포트
-        ELog::Print(ELog::INFO, "ZMQ High-Speed Publisher Started (Port: 5556)");
-    }
+    int conflate = 1;
+    publisher.setsockopt(ZMQ_CONFLATE, &conflate, sizeof(conflate));
+    publisher.bind("tcp://127.0.0.1:5556");
 
     int nWrite = 0;
+    size_t total_written_bytes = 0;
     RawData* popData = nullptr;
-    auto lastNetTime = std::chrono::steady_clock::now();
+    
+    auto sys_start_time = std::chrono::system_clock::now();
+    auto ui_timer = std::chrono::steady_clock::now();
+    auto perf_start_time = std::chrono::steady_clock::now();
+    auto zmq_timer = std::chrono::steady_clock::now();
+    
+    int last_print_events = 0;
+    size_t last_print_bytes = 0;
 
-    while (g_dataQueue.WaitAndPop(popData)) {
-        if (popData) {
-            uint32_t nCh = popData->GetNChannels();
-            uint32_t nPts = (nCh > 0) ? popData->GetChannel(0)->GetNSamples() : 0;
+    while (g_isRunning || g_dataQueue.Size() > 0) {
+        if (g_dataQueue.TryPop(popData)) {
+            if (popData) {
+                uint32_t nCh = popData->GetNChannels();
+                uint32_t nPts = (nCh > 0) ? popData->GetChannel(0)->GetNSamples() : 0;
 
-            // 1. 디스크에 순수 바이너리(Flat) 덤프 (무손실 최고 속도)
-            uint32_t header[3] = { (uint32_t)nWrite, nCh, nPts };
-            fwrite(header, sizeof(uint32_t), 3, fp);
+                // 1. 하드디스크에 순수 바이너리 덤프
+                uint32_t header[3] = { (uint32_t)nWrite, nCh, nPts };
+                total_written_bytes += fwrite(header, sizeof(uint32_t), 3, fp) * 4;
 
-            // ZMQ로 보낼 플랫 바이너리 페이로드 사전 할당
-            size_t payloadSize = 12 + nCh * (4 + nPts * 2);
-            zmq::message_t msg(payloadSize);
-            unsigned char* msg_ptr = static_cast<unsigned char*>(msg.data());
-            std::memcpy(msg_ptr, header, 12);
-            size_t offset = 12;
+                size_t payloadSize = 12 + nCh * (4 + nPts * 2);
+                zmq::message_t msg(payloadSize);
+                unsigned char* msg_ptr = static_cast<unsigned char*>(msg.data());
+                std::memcpy(msg_ptr, header, 12);
+                size_t offset = 12;
 
-            for (uint32_t c = 0; c < nCh; c++) {
-                RawChannel* ch = popData->GetChannel(c);
-                uint32_t chId = ch->GetChannelID();
-                const std::vector<unsigned short>& trace = ch->GetTrace();
+                for (uint32_t c = 0; c < nCh; c++) {
+                    RawChannel* ch = popData->GetChannel(c);
+                    uint32_t chId = ch->GetChannelID();
+                    const std::vector<unsigned short>& trace = ch->GetTrace();
 
-                // 파일 쓰기
-                fwrite(&chId, sizeof(uint32_t), 1, fp);
-                fwrite(trace.data(), sizeof(unsigned short), nPts, fp);
+                    total_written_bytes += fwrite(&chId, sizeof(uint32_t), 1, fp) * 4;
+                    total_written_bytes += fwrite(trace.data(), sizeof(unsigned short), nPts, fp) * 2;
 
-                // ZMQ 메모리 복사 (Zero-Copy 준비)
-                std::memcpy(msg_ptr + offset, &chId, 4);
-                offset += 4;
-                std::memcpy(msg_ptr + offset, trace.data(), nPts * 2);
-                offset += nPts * 2;
+                    std::memcpy(msg_ptr + offset, &chId, 4); offset += 4;
+                    std::memcpy(msg_ptr + offset, trace.data(), nPts * 2); offset += nPts * 2;
+                }
+                nWrite++;
+
+                auto now = std::chrono::steady_clock::now();
+                // 2. 파이썬 GUI용 ZMQ 전송 (50ms 당 1회 제한으로 GUI 뻗음 방지)
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - zmq_timer).count() > 50) {
+                    publisher.send(msg, zmq::send_flags::dontwait);
+                    zmq_timer = now;
+                }
+
+                popData->Clear("C"); 
+                g_freeQueue.Push(popData); 
             }
-            nWrite++;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
 
-            // 2. 파이썬 GUI가 뻗지 않도록 50ms 마다 1번씩만 ZMQ로 브로드캐스팅
-            auto now = std::chrono::steady_clock::now();
-            if (useDisplay && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
-                publisher.send(msg, zmq::send_flags::dontwait);
-                lastNetTime = now;
-            }
-
-            popData->Clear("C"); 
-            g_freeQueue.Push(popData); 
+        // 💡 3. 파이썬 GUI Regex 100% 매칭을 위한 0.5초 주기 상태 출력
+        auto current_time = std::chrono::steady_clock::now();
+        double ui_elapsed_sec = std::chrono::duration<double>(current_time - ui_timer).count();
+        
+        if (ui_elapsed_sec >= 0.5) {
+            double speed_mbps = (((total_written_bytes - last_print_bytes) / 1048576.0) / ui_elapsed_sec);
+            double evt_rate = (nWrite - last_print_events) / ui_elapsed_sec;
+            double total_elapsed = std::chrono::duration<double>(current_time - perf_start_time).count();
+            
+            std::cout << "[LIVE DAQ] "
+                      << "Time: \033[1;32m" << std::fixed << std::setprecision(1) << total_elapsed << " s\033[0m | "
+                      << "Events: " << nWrite << " | "
+                      << "Size: " << std::fixed << std::setprecision(2) << (total_written_bytes / 1048576.0) << " MB | "
+                      << "Rate: " << std::fixed << std::setprecision(1) << evt_rate << " Hz | "
+                      << "Speed: " << std::fixed << std::setprecision(2) << speed_mbps << " MB/s | "
+                      << "DataQ: " << g_dataQueue.Size() << " | "
+                      << "Pool: " << g_freeQueue.Size() << "\n" << std::flush;
+            
+            ui_timer = current_time;
+            last_print_events = nWrite;
+            last_print_bytes = total_written_bytes;
         }
     }
 
     fclose(fp);
-    ELog::Print(ELog::INFO, Form("Consumer Thread: Saved %d binary events successfully.", nWrite));
+    
+    // 💡 4. 파이썬 GUI가 런 정보를 DB에 완벽히 기록하도록 Summary 출력 포맷 통일
+    auto sys_end_time = std::chrono::system_clock::now();
+    auto perf_end_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> total_elapsed = perf_end_time - perf_start_time;
+    double total_sec = total_elapsed.count();
+    double avg_rate = (total_sec > 0) ? (nWrite / total_sec) : 0.0;
+    
+    std::cout << "\n\033[1;36m========================================================\033[0m\n";
+    std::cout << "\033[1;32m   [ Run Summary ]\033[0m\n";
+    std::cout << "   Total Elapsed Time : " << std::fixed << std::setprecision(2) << total_sec << " sec\n";
+    std::cout << "   Total Events       : " << nWrite << "\n";
+    std::cout << "   Total Written      : " << std::fixed << std::setprecision(2) << (total_written_bytes / 1048576.0) << " MB\n";
+    std::cout << "   Average Trigger Rate : " << std::fixed << std::setprecision(2) << avg_rate << " Hz\n";
+    std::cout << "\033[1;36m========================================================\033[0m\n";
 }
 
 int main(int argc, char ** argv) {
@@ -108,20 +152,23 @@ int main(int argc, char ** argv) {
     std::signal(SIGTERM, SigIntHandler);
 
     TString configFile = "";
-    TString outFile = "data.dat"; // 💡 확장자 기본값 .dat 로 변경
+    TString outFile = "data.dat"; 
     int presetNEvt = 0;
+    int presetMaxTime = 0; 
     
     int opt;
-    while((opt = getopt(argc, argv, "f:n:o:")) != -1) {
+    // 💡 [버그 수정 1] 파이썬 GUI의 -t (시간 제한) 인자 파싱 추가
+    while((opt = getopt(argc, argv, "f:n:o:t:")) != -1) {
         switch(opt) {
             case 'f': configFile = optarg; break;
             case 'n': presetNEvt = atoi(optarg); break;
             case 'o': outFile = optarg; break;
+            case 't': presetMaxTime = atoi(optarg); break; 
         }
     }
 
     if(configFile == "") {
-        ELog::Print(ELog::ERROR, "Usage: frontend -f <ticket.config> [-o <out.dat>] [-n <events>]");
+        ELog::Print(ELog::ERROR, "Usage: frontend -f <ticket.config> [-o <out.dat>] [-n <events>] [-t <seconds>]");
         return 1;
     }
 
@@ -151,7 +198,6 @@ int main(int argc, char ** argv) {
             return 1;
         }
         
-        ELog::Print(ELog::INFO, Form("Board MID %lu connected. Writing parameters to Hardware...", mid));
         fadc.NFADC400reset(mid);
         fadc.NFADC400write_RL(mid, bd->RL());
         fadc.NFADC400write_TLT(mid, bd->TLT());
@@ -191,7 +237,7 @@ int main(int argc, char ** argv) {
         }
     }
 
-    std::thread consumerTh(ConsumerWorker, outFile.Data(), true);
+    std::thread consumerTh(ConsumerWorker, outFile.Data());
     ELog::Print(ELog::INFO, "DAQ Running. Press ABORT to stop.");
 
     int bufnum = 0;
@@ -201,11 +247,21 @@ int main(int argc, char ** argv) {
     }
 
     int nevt = 0;
-    TStopwatch sw; sw.Start();
-    double lastTime = 0.0;
-    int lastEvt = 0;
+    auto start_time = std::chrono::steady_clock::now();
 
     while (g_isRunning) {
+        // 💡 [버그 수정 2] -t 옵션에 의한 시간 강제 종료 기능 정상화
+        if (presetMaxTime > 0) {
+            auto current_time = std::chrono::steady_clock::now();
+            int elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
+            if (elapsed >= presetMaxTime) {
+                std::cout << "\n";
+                ELog::Print(ELog::INFO, Form("Time limit reached (%d sec). Stopping DAQ...", presetMaxTime));
+                g_isRunning = false;
+                break;
+            }
+        }
+
         if (g_dataQueue.Size() > 20000) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
@@ -279,21 +335,9 @@ int main(int argc, char ** argv) {
         }
 
         bufnum = next_bufnum; 
-
-        if (nevt % (hevt * 4) == 0) {
-            double curTime = sw.RealTime(); sw.Continue();
-            double dt = curTime - lastTime;
-            double rate = (dt > 0) ? (nevt - lastEvt) / dt : 0.0;
-            lastTime = curTime; lastEvt = nevt;
-            
-            printf("\r\033[1;32m ⚡ Events: %-8d\033[0m | \033[1;33m⏱ Time: %-5.1f s\033[0m | \033[1;35m🔥 Rate: %-6.1f Hz\033[0m | \033[1;36m💾 DataQ: %-4zu\033[0m | \033[1;35m♻ Pool: %-4zu\033[0m", 
-                   nevt, curTime, rate, g_dataQueue.Size(), g_freeQueue.Size());
-            fflush(stdout);
-        }
     }
 
     g_isRunning = false;
-    printf("\n"); 
     g_dataQueue.Stop(); 
     
     if (consumerTh.joinable()) {
@@ -312,14 +356,6 @@ int main(int argc, char ** argv) {
     
     delete runInfo;
     vme.VMEclose();
-
-    double totalTime = sw.RealTime();
-    double avgRate = (totalTime > 0) ? (nevt / totalTime) : 0.0;
-    std::cout << "\n\033[1;36m╔═══════════════════════ DAQ SUMMARY ═══════════════════════╗\033[0m" << std::endl;
-    std::cout << Form("\033[1;36m║\033[0m \033[1;33m%-20s\033[0m : \033[1;37m%-35d\033[0m \033[1;36m║\033[0m", "Total Events", nevt) << std::endl;
-    std::cout << Form("\033[1;36m║\033[0m \033[1;33m%-20s\033[0m : \033[1;37m%-35.2f sec\033[0m \033[1;36m║\033[0m", "Total Elapsed Time", totalTime) << std::endl;
-    std::cout << Form("\033[1;36m║\033[0m \033[1;33m%-20s\033[0m : \033[1;32m%-35.2f Hz\033[0m \033[1;36m║\033[0m", "Average Trigger Rate", avgRate) << std::endl;
-    std::cout << "\033[1;36m╚═══════════════════════════════════════════════════════════╝\033[0m\n" << std::endl;
 
     ELog::Print(ELog::INFO, "DAQ System gracefully stopped.");
     return 0;
