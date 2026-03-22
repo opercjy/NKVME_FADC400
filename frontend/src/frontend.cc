@@ -106,7 +106,7 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
                 
                 gErrorIgnoreLevel = oldLevel;
                 
-                // -4는 ROOT TSocket의 EWOULDBLOCK (소켓 버퍼가 가득 차서 보낼 수 없음)이므로 끊지 않고 드롭시킴
+                // -4는 ROOT TSocket의 EWOULDBLOCK 이므로 끊지 않고 패스
                 if (snd <= 0 && snd != -4) { 
                     socket->Close();
                     delete socket;
@@ -270,7 +270,6 @@ int main(int argc, char ** argv) {
         if(!g_isRunning) break;
 
         // 💡 [Phase 6] Zero-Deadtime Ping-Pong 트리거 재배열
-        // 현재 버퍼의 데이터를 가져오기 "직전"에 반대편 버퍼를 먼저 가동시켜 하드웨어의 휴식(Deadtime)을 0%로 만듦!
         int next_bufnum = 1 - bufnum; 
         for (int i = 0; i < nbd; i++) {
             if (next_bufnum == 1) fadc.NFADC400startH(runInfo->GetFadcBD(i)->MID());
@@ -278,7 +277,6 @@ int main(int argc, char ** argv) {
         }
 
         // 💡 [Phase 6] Dump & Demux (최적화의 핵심)
-        // 개별 이벤트를 읽는 for문을 버리고, 1페이지 전체를 USB 벌크 전송으로 단숨에 퍼옵니다. (Overhead 99% 감소)
         for (int i = 0; i < nbd; i++) {
             FadcBD* bd = runInfo->GetFadcBD(i);
             if (bd->IsTrgBD()) continue;
@@ -288,7 +286,6 @@ int main(int argc, char ** argv) {
             }
         }
 
-        // 가져온 1MB의 메모리 덩어리를 PC 메모리(CPU)상에서 고속으로 분해하여 Object에 적재합니다.
         for (int evtIdx = 0; evtIdx < hevt; evtIdx++) {
             RawData* eventData = nullptr;
             if (!g_freeQueue.TryPop(eventData)) {
@@ -303,12 +300,11 @@ int main(int argc, char ** argv) {
                     int global_chId = (bd->MID() * 4) + bd->CID(j);
                     RawChannel* chObj = eventData->AddChannel(global_chId, dataPoints);
                     
-                    // 이벤트 데이터가 위치한 메모리 오프셋 계산 (2 Bytes/Point)
                     unsigned char* evt_ptr = (unsigned char*)bulk_buffers[i][j] + (evtIdx * dataPoints * 2);
                     
                     for (int k = 0; k < dataPoints; k++) {
-                        unsigned short val = (evt_ptr[k*2 + 1] << 8) | evt_ptr[k*2]; // LSB-MSB 병합
-                        chObj->AddSample(val & 0x0FFF); // 12-bit 마스킹
+                        unsigned short val = (evt_ptr[k*2 + 1] << 8) | evt_ptr[k*2];
+                        chObj->AddSample(val & 0x0FFF); 
                     }
                 }
             }
@@ -347,7 +343,6 @@ int main(int argc, char ** argv) {
     while (g_freeQueue.TryPop(leftover)) { leftover->Clear("C"); delete leftover; }
     while (g_dataQueue.TryPop(leftover)) { leftover->Clear("C"); delete leftover; }
 
-    // Bulk 버퍼 메모리 해제
     for (int i = 0; i < nbd; i++) {
         for (int j = 0; j < 4; j++) {
             delete[] bulk_buffers[i][j];
