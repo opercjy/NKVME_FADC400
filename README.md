@@ -1,7 +1,7 @@
 -----
 
 # NKVME\_FADC400 : NoticeDAQ Central Control
-![C++](https://img.shields.io/badge/C++-14-blue?style=flat-square&logo=c%2B%2B)
+![C++](https://img.shields.io/badge/C++-17-blue?style=flat-square&logo=c%2B%2B)
 ![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=flat-square&logo=python&logoColor=white)
 ![ROOT](https://img.shields.io/badge/Framework-CERN%20ROOT%206-005aaa?style=flat-square)
 ![PyQt5](https://img.shields.io/badge/GUI-PyQt5-41CD52?style=flat-square&logo=qt&logoColor=white)
