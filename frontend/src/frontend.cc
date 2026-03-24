@@ -132,6 +132,10 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
 
 int main(int argc, char ** argv) {
     ROOT::EnableThreadSafety(); 
+    
+    // 💡 [여기에 추가됨] 모니터 강제 종료 시 발생하는 Broken Pipe 크래시 원천 차단
+    std::signal(SIGPIPE, SIG_IGN); 
+    
     std::signal(SIGINT, SigIntHandler);
     std::signal(SIGTERM, SigIntHandler);
 

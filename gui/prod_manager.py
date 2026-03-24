@@ -114,6 +114,11 @@ class ProductionManagerWidget(QWidget):
             QMessageBox.warning(self, "Error", "선택된 파일이 없거나 존재하지 않습니다.")
             return
         
+        # 💡 [핵심 방어막 추가] 이미 실행 중인 프로세스가 있다면 강제 종료 (데드락 방지)
+        if self.prod_process.state() == QProcess.Running:
+            self.prod_process.kill()
+            self.prod_process.waitForFinished(1000)
+        
         self.interactive_group.setEnabled(False)
         self.prod_progress.setValue(0)
         self.sig_log.emit(f"\033[1;35m[PROD]\033[0m Starting Batch Analysis: {os.path.basename(infile)}", False)
@@ -130,13 +135,18 @@ class ProductionManagerWidget(QWidget):
             QMessageBox.warning(self, "Error", "선택된 파일이 없거나 존재하지 않습니다.")
             return
             
+        # 💡 [핵심 방어막 추가] 배치 작업이나 다른 뷰어가 실행 중이라면 강제 종료
+        if self.prod_process.state() == QProcess.Running:
+            self.prod_process.kill()
+            self.prod_process.waitForFinished(1000)
+            
         self.interactive_group.setEnabled(True) # [핵심] 뷰어가 실행되면 컨트롤 버튼 활성화
         self.sig_log.emit(f"\033[1;35m[PROD]\033[0m Launching Interactive Viewer (-d): {os.path.basename(infile)}", False)
         self.sig_log.emit(f"\033[1;33m[TIP]\033[0m 아래의 'Interactive Viewer Controls' 패널 버튼을 클릭하여 파형을 넘겨보세요.", False)
         
         self.prod_process.start(os.path.join(self.current_dir, EXE_PRODUCTION), ["-i", infile, "-d"])
 
-    # --- [신규 추가] C++ 코어(STDIN)로 명령어 송신 ---
+    # --- C++ 코어(STDIN)로 명령어 송신 ---
     def send_command(self, cmd):
         """버튼을 클릭하면 해당 명령문자와 엔터(\n)를 QProcess에 밀어넣습니다."""
         if self.prod_process.state() == QProcess.Running:
@@ -174,5 +184,5 @@ class ProductionManagerWidget(QWidget):
         
     def terminate_process(self):
         if self.prod_process.state() == QProcess.Running:
-            self.prod_process.terminate()
+            self.prod_process.kill() # 더 확실한 종료를 위해 terminate() 대신 kill() 사용 권장
             self.prod_process.waitForFinished(2000)
