@@ -1,4 +1,3 @@
------
 
 # NKVME\_FADC400 : NoticeDAQ Central Control
 ![C++](https://img.shields.io/badge/C++-17-blue?style=flat-square&logo=c%2B%2B)
@@ -13,8 +12,7 @@
 > **Notice & License**
 > 본 레포지토리는 하드웨어 제조사인 Notice Korea의 공식적인 동의 및 허가 하에 로우레벨 통신 라이브러리(nfadc400, 6uvme)의 소스 코드를 공유하며, 연구 목적의 프레임워크 통합 및 지속적인 유지보수를 수행하고 있습니다.
 
-
-**NKVME\_FADC400**은 VME 기반 Notice FADC400 (400MS/s, 12-bit, 2.5ns/sample) 보드를 제어하고 데이터를 수집, 모니터링, 오프라인 분석을 수행하는 통합 데이터 획득(DAQ) 프레임워크입니다.
+**NKVME\_FADC400**은 VME 기반 Notice FADC400 (400MS/s, 10-bit, 2.5ns/sample) 보드를 제어하고 데이터를 수집, 모니터링, 오프라인 분석을 수행하는 통합 데이터 획득(DAQ) 프레임워크입니다.
 
 본 시스템은 데이터 처리는 C++ ROOT 백엔드에서, 사용자 인터페이스와 DB 제어는 Python PyQt5 프론트엔드에서 수행하는 하이브리드 아키텍처로 설계되어 안정성과 유지보수 편의성을 제공합니다. 특히 극한의 노이즈 환경과 고속 트리거 획득 상황에서도 VME 버스 병목으로 인해 시스템이 멈추지 않도록, 하드웨어 핑퐁 버퍼링(Ping-Pong Buffering) 논리를 완벽히 복원하고 데이터 파싱 오버헤드를 극단적으로 제거한 **제로 카피(Zero-Copy) 엔진**이 탑재되어 있습니다.
 
@@ -70,34 +68,17 @@ NKVME_FADC400/
 ├── lib/                       # 오프라인 분석용 공유 라이브러리(.so) 및 ROOT 딕셔너리(.pcm)
 │
 ├── gui/                       # [Python] 메인 통제 대시보드 및 서브 모듈
-│   ├── daq_gui.py             # 중앙 대시보드 (메인 런처). 프로세스 제어 및 UI 담당
-│   ├── elog_manager.py        # SQLite3 E-Logbook(daq_history.db) 관리 모듈
-│   ├── config_manager.py      # 설정 파일 및 데이터 저장 경로 관리 모듈
-│   ├── prod_manager.py        # 오프라인 분석(Production) GUI 모듈
-│   ├── hv_control.py          # High Voltage 제어 모듈
-│   └── tlu_simulator.py       # Trigger Logic Unit 시뮬레이터 모듈
-│
 ├── frontend/                  # [C++] 데이터 수집 코어 모듈
-│   ├── src/frontend.cc        # 메인 DAQ 백엔드. 멀티스레드, Object Pool, 하드웨어 제어
-│   ├── src/production.cc      # 오프라인 데이터 환산 분석기 (_prod.root 생성)
-│   ├── src/ConfigParser.cc    # 텍스트 설정 파일을 C++ 객체로 변환
-│   └── src/ELog.cc            # 터미널용 로그 출력 유틸리티
-│
 ├── display/                   # [C++] 실시간 DQM (Data Quality Monitor)
-│   └── src/OnlineMonitor.cc   # TCP 데이터 수신, 파형 및 스펙트럼 동적 렌더링
-│
 ├── objects/                   # [C++] ROOT 딕셔너리 공유 객체
-│   └── src/(RawData, RunInfo, RawChannel, Pmt, Run).cc # 프로세스 간 통신용 데이터 컨테이너
-│
 ├── nfadc400/                  # [C/C++] Notice 제조사 제공 로우레벨 라이브러리 소스
-│   ├── src/nfadc400/          # FADC400 레지스터 맵 및 제어 함수
-│   ├── src/6uvme/             # USB-VME 브릿지 통신 라이브러리
-│   └── src/display/           # VME 상태창(NoticeDISPLAY) 모듈 (C 코어만 필수, ROOT 모듈은 레거시)
 │
 ├── rules/                     # Linux 환경 USB 장치 권한 설정 스크립트 (setup_usb.sh)
 ├── setup.sh                   # 프로젝트 통합 환경 변수 셋업 스크립트
-├── offline_spe.cpp            # 오프라인 ROOT 매크로: PMT SPE(단일 광전자) 교정용
-└── offline_charge.cpp         # 오프라인 ROOT 매크로: 범용 전하량 스펙트럼 시각화
+│
+├── offline_charge.cpp         # [오프라인/교육용] 범용 전하량 스펙트럼 및 파형 렌더링
+├── offline_spe.cpp            # [오프라인/심화] PMT SPE(단일 광전자) 교정 및 절대 이득 추출
+└── offline_compton_edge.cpp   # [오프라인/심화] ERFC 피팅을 통한 Compton Edge 역문제 해석
 ```
 
 -----
@@ -107,7 +88,6 @@ NKVME_FADC400/
 ### 4.1 제조사 로우레벨 라이브러리 컴파일 (초보자 필독)
 
 메인 프레임워크를 빌드하기 전에, 하드웨어 통신을 담당하는 제조사의 원본 라이브러리를 반드시 가장 먼저 컴파일해야 합니다.
-*(주의: `display` 하위의 `displayroot` 모듈은 시스템에서 현재 사용하지 않는 레거시이므로 설치를 생략합니다.)*
 
 ```bash
 # 1. 관리자 권한 획득 (su 또는 sudo su)
@@ -131,7 +111,6 @@ make clean; make; make install
 # 5. VME 상태창 (NoticeDISPLAY) 일반 C 라이브러리 설치
 cd ../../display/display             
 make clean; make; make install
-# (참고: cd ../displayroot 빌드 과정은 미사용 레거시이므로 건너뜁니다.)
 
 # 6. 관리자 모드 종료 및 최상단 디렉토리 복귀
 exit
@@ -139,8 +118,6 @@ cd ../../../..
 ```
 
 ### 4.2 필수 패키지 설치
-
-OS 환경에 맞게 시스템 의존성 패키지를 설치합니다. (CERN ROOT 6는 시스템에 사전 설치되어 있어야 합니다.)
 
 **[Rocky Linux / AlmaLinux / CentOS]** - *권장 환경*
 
@@ -153,8 +130,6 @@ pip3 install PyQt5 caen-libs
 
 ### 4.3 하드웨어 USB 권한 설정 (최초 1회)
 
-일반 사용자가 USB-VME 컨트롤러에 접근할 수 있도록 udev 룰을 등록합니다.
-
 ```bash
 cd rules/
 sudo ./setup_usb.sh
@@ -163,20 +138,17 @@ cd ..
 
 ### 4.4 메인 프로젝트 환경 변수 및 컴파일 (CMake)
 
-라이브러리 셋업이 완료되었다면 메인 통합 프레임워크를 빌드합니다.
-
 ```bash
-# 1. 메인 프로젝트 통합 환경 변수 로드
+# 메인 프로젝트 통합 환경 변수 로드
 source setup.sh
 
-# 2. CMake 빌드 수행
+# CMake 빌드 수행
 mkdir build && cd build
 cmake ..
 make -j4
 ```
 
-> **[주의사항]**
-> 터미널을 열어 DAQ를 구동할 때마다 반드시 프로젝트 최상단 폴더에서 `source nfadc400/notice_env.sh` 와 `source setup.sh` 두 명령어를 실행해야 정상 작동합니다.
+> **[주의사항]** 터미널을 열어 DAQ를 구동할 때마다 반드시 프로젝트 최상단 폴더에서 `source nfadc400/notice_env.sh` 와 `source setup.sh` 두 명령어를 실행해야 정상 작동합니다.
 
 -----
 
@@ -184,55 +156,66 @@ make -j4
 
 FADC400의 트리거 한계를 올바르게 이끌어내기 위해 `config/*.config` 파일 수정 시 다음 사항을 반드시 준수해야 합니다.
 
-  * **신호 극성 (POL):** PMT(광전자증폭관)에서 출력되는 신호는 Negative 펄스이므로 반드시 `POL 0` (4채널일 경우 `POL 0 0 0 0`)으로 설정해야 합니다. (`1`은 Positive)
-  * **베이스라인 오프셋 (DACOFF):** Negative 펄스가 12-bit ADC(0\~4095) 대역 내에서 충분한 하강 공간을 가질 수 있도록, 베이스라인 오프셋을 높은 값(`DACOFF 3400`)으로 설정해야 합니다.
-  * **트리거 동시계수 (TLT):** 모든 채널의 활성화를 허용하는 범용 설정값은 `TLT 0xFFFE` (Global OR) 입니다.
+  * **신호 극성 (POL):** PMT 신호는 Negative 펄스이므로 반드시 `POL 0`으로 설정합니다. (`1`은 Positive)
+  * **베이스라인 오프셋 (DACOFF):** Negative 펄스가 10-bit ADC 대역 내에서 충분한 하강 공간을 가질 수 있도록, 베이스라인 오프셋을 높은 값(`DACOFF 3400`)으로 설정합니다.
+  * **트리거 동시계수 (TLT):** 범용 설정값은 `TLT 0xFFFE` (Global OR) 입니다.
 
 -----
 
-## 6\. 오프라인 분석 매크로 (Offline Analysis Macros)
+## 6\. 오프라인 분석 및 교육용 매크로 (Offline Analysis & Educational Macros)
 
-수집 및 오프라인 변환(`production_nfadc400`)이 완료된 `*_prod.root` 데이터는 순수 플랫 트리(Pure Flat Tree) 구조로 설계되어 있습니다. 이를 직관적으로 시각화하고 물리적 유의미성을 도출하기 위해 두 가지 핵심 ROOT 매크로를 제공합니다.
+수집 및 오프라인 변환(`production_nfadc400`)이 완료된 `*_prod.root` 데이터는 순수 플랫 트리(Pure Flat Tree) 구조를 가집니다. 최근 메인테이너 패치를 통해 TTreeReader의 분할 배열(Split Branch) 버그를 회피하는 \*\*안전한 클래식 포인터 방식(`TClonesArray` + `SetBranchAddress`)\*\*이 전면 도입되었으며, ROOT6 딕셔너리 명명 규칙(`G__` prefix) 동기화를 통해 `AutoLoad` 에러를 완벽히 해결했습니다.
+
+아래 매크로들은 단순한 데이터 확인을 넘어, 입자물리학 데이터 분석의 정석을 학습할 수 있는 훌륭한 교보재입니다.
 
 ### 6.1 범용 전하량 스펙트럼 시각화 (`offline_charge.cpp`)
 
-  * 변환된 데이터에서 각 채널별 적분 전하량(Charge) 스펙트럼을 Log-Y 스케일로 렌더링합니다.
-  * 캡슐화된 `Pmt::Waveform()` 포인터를 직접 참조하여, 첫 번째 이벤트(Event 0)의 시계열 파형(Voltage Drop)을 시간(ns) 단위로 환산하여 우측 패널에 동시 표출합니다.
-  * **실행:** `root -l 'offline_charge.cpp("data_prod.root")'`
+  * **물리적/교육적 의도:** 아날로그 회로에서 편의상 사용하는 **'펄스 파고(Pulse Height/Amplitude)'** 방법론이 노이즈에 얼마나 취약한지, 그리고 파형 전체의 면적을 구하는 **'차지섬(Charge Sum / 펄스 적분)'** 방법론이 잔피크(Fine structures) 보존과 에너지 분해능 면에서 얼마나 압도적으로 우수한지 직관적으로 4분할 캔버스로 비교·검증합니다.
+  * **기능:** 하드웨어 샘플링 포인트(Ndp) 확장에 맞춰 X축(Time Window) 범위를 동적으로 확장하는 Auto-Rebinning 로직이 탑재되어 있습니다.
+  * **실행:** `root -l 'offline_charge.cpp("data/run_101_prod.root", 0, 50.0)'`
 
-### 6.2 PMT 단일 광전자 교정 (`offline_spe.cpp`)
+### 6.2 PMT 단일 광전자 교정 및 절대 이득 추출 (`offline_spe.cpp`)
 
-  * PMT의 절대 이득(Absolute Gain)을 추출하기 위한 정밀 캘리브레이션 도구입니다.
-  * **Multi-Gaussian 피팅:** Pedestal(전자 노이즈), 1st p.e.(단일 광전자), 2nd p.e.(이중 광전자) 피크를 합성 함수로 구성하여 스펙트럼을 해부합니다.
-  * **Minuit2 최적화:** 기초적인 `Fit()` 함수의 수렴 실패를 방지하기 위해, 입자물리 표준인 `Minuit2` 미니마이저를 적용하고 파라미터의 물리적 제약 조건(Boundary Limits)을 부여하여 피팅 성공률과 정밀도를 극대화했습니다.
-  * **실행:** `root -l 'offline_spe.cpp("data_prod.root")'`
+  * **물리적/교육적 의도:** 미약한 빛(LED/Laser)이 들어올 때 발생하는 스펙트럼을 분석하여 장비의 핵심 성능 지표인 \*\*절대 이득(Absolute Gain)\*\*을 추출합니다.
+  * **기능 개선 사항:**
+      * **Multi-Gaussian 물리 제약:** 2-PE 피크를 독립 변수가 아닌 1-PE 종속 변수로 강제하여 모델이 우아하게 수렴하도록 구성했습니다.
+      * **정밀 피팅 엔진:** `Minuit2` 미니마이저를 도입하여 기초적인 `Fit()` 함수의 수렴 실패 한계를 돌파했습니다.
+      * **하드웨어 스펙 정밀 환산 (10-bit 패치):** FADC400의 정확한 하드웨어 스펙(10-bit 분해능 = 1024 steps, 2.0Vpp, 2.5ns sampling, 50 Ohm)을 적용하여 ADC 값을 정확한 물리량(pC)으로 환산하는 로직을 완벽히 픽스했습니다.
+  * **실행:** `root -l 'offline_spe.cpp("data/run_101_prod.root", 0, 3000.0)'`
+
+### 6.3 [NEW] 컴프턴 엣지와 역문제 해석 (`offline_compton_edge.cpp`)
+
+  * **물리적/교육적 의도:** 방사선원(Radioactive Source) 측정 시 발생하는 거대한 컴프턴 연속 스펙트럼(Compton Continuum)의 함정에서 벗어납니다. 양자전기역학(QED)의 클라인-니시나(Klein-Nishina) 후방 산란 공식에 기반하여, 가우시안 분해능 커널에 의해 뭉개진(Smeared) 데이터로부터 진정한 컴프턴 엣지를 찾아내는 **역문제(Inverse Problem)** 해법을 제시합니다.
+  * **기능 개선 사항:**
+      * **Right-to-Left 스캔 알고리즘:** 저에너지 대역의 노이즈 피크를 오판하지 않도록 스펙트럼의 고에너지(우측) 끝에서부터 거꾸로 스캔하여 능선 높이의 절반(Half-maximum)을 초기값으로 짚어내는 강력한 예외 처리 알고리즘이 탑재되었습니다.
+      * **상보오차함수(ERFC) 컨볼루션:** 계단 함수와 가우시안의 합성 결과인 `TMath::Erfc`를 사용하여 엣지의 변곡점(Inflection Point)을 정밀 타격합니다.
+      * **우아한 시각화:** `TLatex`와 `TArrow`를 활용해 역문제 해답 지점에 직관적인 물리 수식 텍스트 라벨을 렌더링합니다.
+  * **실행:** `root -l 'offline_compton_edge.cpp("data/run_101_prod.root", 0, 15000.0)'`
 
 -----
 
 ## 7\. 유지보수 가이드 (Maintenance)
 
-  * **ROOT 딕셔너리:** 프로세스 간 통신용 공유 구조체(`objects/include/*.hh`)를 수정할 경우, 반드시 `build` 디렉토리에서 `make clean` 후 재빌드하여 딕셔너리를 갱신해야 합니다.
+  * **ROOT 딕셔너리:** 프로세스 간 통신용 공유 구조체(`objects/include/*.hh`)를 수정할 경우, 반드시 `build` 디렉토리에서 `make clean` 후 재빌드하여 딕셔너리를 갱신해야 합니다. `CMakeLists.txt` 내 `G__` 접두사 룰을 절대 해제하지 마십시오.
   * **제조사 라이브러리:** 펌웨어나 로우레벨 라이브러리 업데이트 시, `nfadc400/src/` 내부의 C/C++ 소스를 교체합니다. `frontend.cc` 내 하드웨어 초기화 시퀀스(레지스터 제어 순서)는 제조사 사양을 엄격히 반영한 것이므로 임의 변경을 지양합니다.
 
 -----
 
 ## 8\. 그래픽 인터페이스 및 사용자 경험
+<img width="1270" height="976" alt="image" src="https://github.com/user-attachments/assets/2b977bd3-1a3b-4179-8de9-0e0d8a5b221a" />
+<img width="1240" height="860" alt="image" src="https://github.com/user-attachments/assets/9379442e-628f-4818-b5c4-47e5d443b0e5" />
+<img width="1270" height="976" alt="image" src="https://github.com/user-attachments/assets/86542024-52b2-492b-a60c-2d4c8409406f" />
+<img width="1270" height="976" alt="image" src="https://github.com/user-attachments/assets/52c0cf4e-fe7d-4e9d-a0ec-8c9330f63fe5" />
+<img width="1270" height="976" alt="image" src="https://github.com/user-attachments/assets/d85c31e7-1e78-477e-b19e-470da25dce95" />
+<img width="1270" height="976" alt="image" src="https://github.com/user-attachments/assets/6d7608f7-01be-4174-9963-79f27553d82e" />
+<img width="1270" height="976" alt="image" src="https://github.com/user-attachments/assets/5aee26b8-c730-4f24-9e59-7f182ba22621" />
+<img width="1220" height="840" alt="image" src="https://github.com/user-attachments/assets/b4eed806-8633-4b59-b3d3-595417b4fc81" />
+<img width="1270" height="976" alt="image" src="https://github.com/user-attachments/assets/9dced63b-e9d6-449c-badb-40d2016f54ce" />
 
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/ced23bd3-06b2-4faa-bddb-018c39bbaae2" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/d9ad8af2-77a2-4108-b7d8-da7460405d7d" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/eb295e20-05c2-4e68-9caa-86f192c39625" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/2a0c8cf5-a674-4a17-a82e-a4dad607fb50" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/5744742d-92b1-4c99-93bf-1c13a7b1fb0e" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/a4b91cb5-1f17-4446-84f8-1cb2a2ef987a" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/58fc1b39-12d2-4f60-9ece-0ebbbdafc2df" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/4565c7cf-29ef-4f8b-97dd-ce128b0a0e78" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/4d15261c-3e59-4088-a6f9-bf66f915771f" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/41a9c4f4-8ad6-4b8b-a15b-19cfd08ad231" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/652bddc2-e571-4d90-8f6f-ea8ff68a622e" />
-<img width="1240" height="860" alt="image" src="https://github.com/user-attachments/assets/55c9c7f6-08fa-4f04-b098-bd293ebef5b1" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/1d313709-2eb3-426e-96ba-4dfa9459b8ca" />
-<img width="1270" height="940" alt="image" src="https://github.com/user-attachments/assets/5b4f654c-dc68-4775-9a32-a2d3e674f1b2" />
-<img width="1220" height="840" alt="image" src="https://github.com/user-attachments/assets/b23b6cd1-9fbb-4324-8356-56bc3e8720c9" />
+<img width="1220" height="840" alt="image" src="https://github.com/user-attachments/assets/b15ea53c-f755-4dc5-b28f-74a9d55957bb" />
+<img width="1028" height="773" alt="image" src="https://github.com/user-attachments/assets/0143914d-9c20-4019-ac78-f21d523cd69a" />
+<img width="1020" height="740" alt="image" src="https://github.com/user-attachments/assets/6105cb68-f3cb-4857-9fb6-0832162e8dae" />
+<img width="1020" height="740" alt="image" src="https://github.com/user-attachments/assets/e02cdcc3-4b5d-458c-a404-a5f21028f58c" />
 
 ## 9\. 감사의 글
 
@@ -248,9 +231,3 @@ FADC400의 트리거 한계를 올바르게 이끌어내기 위해 `config/*.con
 과거 전남대학교에서 현재 시스템의 핵심인 데이터 직렬화 및 원천 데이터 객체(Obj) 아키텍처의 초석을 설계해 주신 이재승 박사님께 각별한 감사의 말씀을 전합니다. 그 당시의 뛰어난 아키텍처 설계가 있었기에 현재의 극한 최적화가 가능했습니다.
 
 데이터 분석 코어에 사용된 오픈소스 프레임워크인 CERN ROOT 개발진과, 대시보드 UI 구현에 사용된 PyQt5 커뮤니티의 기술적 기여에도 깊은 감사를 드립니다.
-
-
-
-
-
-
