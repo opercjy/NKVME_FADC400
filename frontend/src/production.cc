@@ -13,9 +13,6 @@
 
 using namespace std;
 
-// =======================================================================
-// Constructor & Destructor
-// =======================================================================
 ProductionAnalyzer::ProductionAnalyzer(const char* inFile, const char* outFile, bool useDisplay, bool saveWaveform) 
     : _isValid(false), _useDisplay(useDisplay), _saveWaveform(saveWaveform), _nEntries(0),
       _fIn(nullptr), _tIn(nullptr), _evtData(nullptr), _runInfo(nullptr),
@@ -25,9 +22,6 @@ ProductionAnalyzer::ProductionAnalyzer(const char* inFile, const char* outFile, 
     for(int i=0; i<MAX_CH; i++) { 
         _histWave[i] = nullptr; 
         _lineBsl[i] = nullptr; 
-        _hQtot[i] = nullptr;
-        _wTime[i] = new std::vector<double>();
-        _wDrop[i] = new std::vector<double>();
     }
 
     _fIn = new TFile(inFile, "READ");
@@ -57,15 +51,7 @@ ProductionAnalyzer::ProductionAnalyzer(const char* inFile, const char* outFile, 
         _tOut->Branch("Pmt", &_pmtArray);
         
         if (_saveWaveform) {
-            ELog::Print(ELog::INFO, "Waveform (-w) mode ON. Saving full time-series into the tree.");
-            for(int i=0; i<MAX_CH; i++) {
-                _tOut->Branch(Form("wTime_Ch%d", i), &_wTime[i]);
-                _tOut->Branch(Form("wDrop_Ch%d", i), &_wDrop[i]);
-            }
-        }
-        
-        for(int i=0; i<MAX_CH; i++) {
-            _hQtot[i] = new TH1F(Form("hQtot_Ch%d", i), Form("Charge Distribution Ch%d;Charge (ADC sum);Counts", i), 1000, 0, 50000);
+            ELog::Print(ELog::INFO, "Waveform (-w) mode ON. Waveforms will be saved directly into Pmt._wave array.");
         }
     } 
     else {
@@ -86,8 +72,6 @@ ProductionAnalyzer::~ProductionAnalyzer() {
     for(int i=0; i<MAX_CH; i++) {
         if(_histWave[i]) delete _histWave[i];
         if(_lineBsl[i]) delete _lineBsl[i];
-        if(_wTime[i]) delete _wTime[i];
-        if(_wDrop[i]) delete _wDrop[i];
     }
     if (_canvasEvent) delete _canvasEvent;
 
@@ -95,7 +79,7 @@ ProductionAnalyzer::~ProductionAnalyzer() {
     if (_fIn)  { _fIn->Close();  delete _fIn; }
 }
 
-void ProductionAnalyzer::AnalyzeWaveform(const vector<unsigned short>& wave, double &bsl, double &amp, double &time, double &charge, std::vector<double>* vTime, std::vector<double>* vDrop) {
+void ProductionAnalyzer::AnalyzeWaveform(const vector<unsigned short>& wave, double &bsl, double &amp, double &time, double &charge, float* outWave) {
     int ndp = wave.size();
     if (ndp < 30) { bsl = 0; amp = 0; time = 0; charge = 0; return; }
 
@@ -127,9 +111,9 @@ void ProductionAnalyzer::AnalyzeWaveform(const vector<unsigned short>& wave, dou
             }
         }
         
-        if (_saveWaveform && vTime && vDrop) {
-            vTime->push_back(i * 2.5);  
-            vDrop->push_back(dropAmp);  
+        // 💡 [핵심] Pmt._wave 배열 포인터가 넘어왔다면 다이렉트로 기록
+        if (outWave) {
+            outWave[i] = (float)dropAmp;  
         }
     }
 
@@ -147,10 +131,6 @@ void ProductionAnalyzer::RunBatch() {
     for (int ev = 0; ev < _nEntries; ev++) {
         _tIn->GetEntry(ev);
         _pmtArray->Clear("C"); 
-        
-        if (_saveWaveform) {
-            for(int i=0; i<MAX_CH; i++) { _wTime[i]->clear(); _wDrop[i]->clear(); }
-        }
 
         int nCh = _evtData->GetNChannels();
         for (int i = 0; i < nCh; i++) {
@@ -158,17 +138,20 @@ void ProductionAnalyzer::RunBatch() {
             if (!ch) continue;
             
             int chId = ch->GetChId();
-            if (chId < 0 || chId >= MAX_CH) {
-                continue;
+            if (chId < 0 || chId >= MAX_CH) continue;
+
+            Pmt* pmt = (Pmt*)_pmtArray->ConstructedAt(i);
+            pmt->SetId(chId);
+
+            if (_saveWaveform) {
+                pmt->AllocateWaveform(ch->GetNPoints()); // TClonesArray 내부에서 동적 할당
             }
 
             double bsl, amp, time, charge;
-            AnalyzeWaveform(ch->GetSamples(), bsl, amp, time, charge, _wTime[chId], _wDrop[chId]);
+            // -w 옵션이 켜져 있으면 pmt->Waveform() 포인터를 전달
+            AnalyzeWaveform(ch->GetSamples(), bsl, amp, time, charge, _saveWaveform ? pmt->Waveform() : nullptr);
 
-            Pmt* pmt = (Pmt*)_pmtArray->ConstructedAt(i);
-            pmt->SetId(chId); pmt->SetPedMean(bsl); pmt->SetQmax(amp); pmt->SetQtot(charge); pmt->SetFmax(time);
-
-            _hQtot[chId]->Fill(charge);
+            pmt->SetPedMean(bsl); pmt->SetQmax(amp); pmt->SetQtot(charge); pmt->SetFmax(time);
         }
         _tOut->Fill(); 
         
@@ -186,7 +169,6 @@ void ProductionAnalyzer::RunBatch() {
     
     _fOut->cd();
     _tOut->AutoSave();
-    for(int i=0; i<MAX_CH; i++) { if(_hQtot[i]->GetEntries() > 0) _hQtot[i]->Write(); }
 
     std::cout << "\n\033[1;35m╔═══════════════════ PRODUCTION SUMMARY ════════════════════╗\033[0m" << std::endl;
     std::cout << Form("\033[1;35m║\033[0m \033[1;33m%-20s\033[0m : \033[1;37m%-35d\033[0m \033[1;35m║\033[0m", "Total Processed", _nEntries) << std::endl;
@@ -225,7 +207,7 @@ void ProductionAnalyzer::ShowEvent(int entry) {
         _histWave[chId]->Reset();
         
         double bsl, amp, time, charge;
-        AnalyzeWaveform(wav, bsl, amp, time, charge, nullptr, nullptr); 
+        AnalyzeWaveform(wav, bsl, amp, time, charge, nullptr); 
 
         double minV = 99999, maxV = -99999;
         for (int pt = 0; pt < ns; pt++) {
@@ -237,7 +219,7 @@ void ProductionAnalyzer::ShowEvent(int entry) {
         
         if (maxV <= minV) { maxV = minV + 100; minV = minV - 100; }
 
-        if (i < 4) { // 화면상 분할 표시는 처음 4개만 렌더링
+        if (i < 4) { 
             _canvasEvent->cd(i + 1);
             double margin = (maxV - minV) * 0.1;
             if(margin < 10) margin = 10;

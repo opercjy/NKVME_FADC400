@@ -38,9 +38,21 @@ void Pmt::Clear(Option_t* opt) {
     }
 }
 
+void Pmt::AllocateWaveform(int ndp) {
+    if (_ndp == ndp && _wave != nullptr) return; // 동일 크기면 재활용 (속도 극대화)
+    if (_wave != nullptr) {
+        delete [] _wave;
+        _wave = nullptr;
+    }
+    _ndp = ndp;
+    if (_ndp > 0) {
+        _wave = new float[_ndp];
+        memset(_wave, 0, _ndp * sizeof(float));
+    }
+}
+
 void Pmt::SetWaveform(float * wave) {
     if(_ndp == 0 || _wave == nullptr || wave == nullptr) return;
-    
     size_t n = _ndp * sizeof(float);
     memcpy(_wave, wave, n);
 }

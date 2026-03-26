@@ -9,10 +9,10 @@ public:
     Pmt(int id, int ndp);
     virtual ~Pmt();
 
-    // [추가] 객체 재사용 시 메모리 누수를 막기 위한 초기화 함수
     virtual void Clear(Option_t* opt = "") override;
 
     void SetId(int id) { _id = id; }
+    void AllocateWaveform(int ndp); // 💡 [핵심] TClonesArray 재사용 시 동적 배열 안전 할당
     void SetWaveform(float * wave);
 
     void SetPedMean(double val) { _pedmean = val; }
@@ -35,8 +35,7 @@ private:
     int _id ;
     int _ndp;
 
-    // [수정] ROOT Tree 직렬화를 위해 반드시 주석이 //[size] 형태여야 합니다.
-    float * _wave; //[_ndp] 
+    float * _wave; //[_ndp]  // 💡 ROOT 트리 직렬화를 위한 가변 배열 마커
 
     double _pedmean;
     double _pedrms ;

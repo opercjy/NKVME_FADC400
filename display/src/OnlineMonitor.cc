@@ -3,6 +3,7 @@
 #include "RawChannel.hh"
 
 #include <TApplication.h>
+#include <TGClient.h>      // 💡 [추가] gClient 사용을 위한 헤더
 #include <TMessage.h>
 #include <TStyle.h>
 #include <TSystem.h>
@@ -23,7 +24,6 @@ Bool_t SafeTimer::Notify() {
 OnlineMonitor::OnlineMonitor(const TGWindow *p, UInt_t w, UInt_t h) 
     : TGMainFrame(p, w, h), fServerSocket(nullptr), fSocket(nullptr)
 {
-    // 🔥 [버그 픽스] 과거의 libObjects.so 대신 통합 공유 라이브러리를 로드하도록 수정!
     gSystem->Load("libNKVME_FADC400.so");
     gStyle->SetOptStat(111111); 
 
@@ -34,9 +34,7 @@ OnlineMonitor::OnlineMonitor(const TGWindow *p, UInt_t w, UInt_t h)
     c->SetFillColor(kWhite);
 
     SetWindowName("NoticeDAQ Real-time DQM (Port: 9090)");
-    MapSubwindows();
-    Resize(GetDefaultSize());
-    MapRaised(); 
+    MapSubwindows(); Resize(GetDefaultSize()); MapRaised(); 
 
     fServerSocket = new TServerSocket(9090, kTRUE);
     if (!fServerSocket->IsValid()) {
@@ -50,8 +48,7 @@ OnlineMonitor::OnlineMonitor(const TGWindow *p, UInt_t w, UInt_t h)
 }
 
 OnlineMonitor::~OnlineMonitor() {
-    fTimer->Stop(); 
-    delete fTimer;
+    fTimer->Stop(); delete fTimer;
     if (fSocket) { fSocket->Close(); delete fSocket; }
     if (fServerSocket) { fServerSocket->Close(); delete fServerSocket; }
     
@@ -86,12 +83,9 @@ void OnlineMonitor::BuildCanvas(const std::vector<int>& activeChs) {
         fWaveform[chId]->SetLineWidth(2);
 
         fBaseLine[chId] = new TLine();
-        fBaseLine[chId]->SetLineColor(kRed);
-        fBaseLine[chId]->SetLineStyle(2); 
+        fBaseLine[chId]->SetLineColor(kRed); fBaseLine[chId]->SetLineStyle(2); 
 
-        c->cd(i + 1);
-        gPad->SetGrid();
-        fWaveform[chId]->Draw("HIST");
+        c->cd(i + 1); gPad->SetGrid(); fWaveform[chId]->Draw("HIST");
 
         fSpectrum[chId] = new TH1F(Form("hSpec_%d", chId), Form("Ch %d Charge Spectrum;Charge (ADC);Counts", chId), 500, 0, 50000);
         fSpectrum[chId]->SetDirectory(nullptr); 
@@ -100,10 +94,7 @@ void OnlineMonitor::BuildCanvas(const std::vector<int>& activeChs) {
         fSpectrum[chId]->SetFillStyle(1001);
         fSpectrum[chId]->SetMinimum(0.5); 
         
-        c->cd(i + 1 + nCh); 
-        gPad->SetGrid();
-        gPad->SetLogy(); 
-        fSpectrum[chId]->Draw("HIST");
+        c->cd(i + 1 + nCh); gPad->SetGrid(); gPad->SetLogy(); fSpectrum[chId]->Draw("HIST");
     }
     c->Update();
     fCurrentChs = activeChs;
@@ -111,8 +102,6 @@ void OnlineMonitor::BuildCanvas(const std::vector<int>& activeChs) {
 }
 
 void OnlineMonitor::HandleTimer() {
-    // [핵심 픽스 1] gSystem->ProcessEvents() 삭제 (창 크기 조절 시 데드락 방지)
-    
     if (!fSocket && fServerSocket && fServerSocket->IsValid()) {
         TSocket *tempSock = fServerSocket->Accept(0); 
         if (tempSock && tempSock != (TSocket*)-1) {
@@ -122,25 +111,20 @@ void OnlineMonitor::HandleTimer() {
     }
 
     if (fSocket && fSocket->IsValid()) {
-        TMessage *latestMess = nullptr;
-        int readLimit = 50; 
+        int readLimit = 2000; 
+        bool needUpdate = false;
         
         while (fSocket->Select(TSocket::kRead, 0) > 0 && readLimit-- > 0) {
             TMessage *mess = nullptr;
             if (fSocket->Recv(mess) <= 0) {
                 std::cout << "[WARN] Frontend DAQ Disconnected." << std::endl;
                 fSocket->Close(); delete fSocket; fSocket = nullptr;
-                if (latestMess) delete latestMess;
                 fCurrentChs.clear();
                 return;
             }
-            if (latestMess) delete latestMess; 
-            latestMess = mess;
-        }
 
-        if (latestMess) {
-            if (latestMess->What() == kMESS_OBJECT) {
-                TObject *obj = latestMess->ReadObject(RawData::Class());
+            if (mess->What() == kMESS_OBJECT) {
+                TObject *obj = mess->ReadObject(RawData::Class());
                 
                 if (obj && obj->InheritsFrom(RawData::Class())) {
                     RawData *evtData = (RawData*)obj;
@@ -157,9 +141,6 @@ void OnlineMonitor::HandleTimer() {
                     }
 
                     if (!fCurrentChs.empty()) {
-                        TCanvas *c = fEcanvas->GetCanvas();
-                        bool needUpdate = false;
-                        
                         for (int i = 0; i < nCh; i++) {
                             RawChannel *ch = evtData->GetChannel(i);
                             if (!ch) continue;
@@ -178,64 +159,63 @@ void OnlineMonitor::HandleTimer() {
 
                             double bsl_sum = 0;
                             int bsl_cnt = std::min(20, nPts); 
-                            for(int pt = 0; pt < bsl_cnt; pt++) {
-                                bsl_sum += ch->GetSample(pt);
-                            }
+                            for(int pt = 0; pt < bsl_cnt; pt++) bsl_sum += ch->GetSample(pt);
                             double bsl = (bsl_cnt > 0) ? (bsl_sum / bsl_cnt) : 0;
 
                             double charge = 0;
-                            double minV = 99999, maxV = -99999;
-                            
                             for (int pt = 0; pt < nPts; pt++) {
                                 unsigned short val = ch->GetSample(pt);
                                 fWaveform[chId]->SetBinContent(pt + 1, val);
-                                
-                                if (val > maxV) maxV = val;
-                                if (val < minV) minV = val;
-
                                 double drop = bsl - val;
                                 if (drop > 0) charge += drop;
                             }
                             
                             if (charge > 0) fSpectrum[chId]->Fill(charge);
-
-                            double margin = (maxV - minV) * 0.1;
-                            if (margin < 5) margin = 5;
-                            fWaveform[chId]->GetYaxis()->SetRangeUser(minV - margin, maxV + margin);
-
-                            c->cd(i + 1);
-                            fWaveform[chId]->Draw("HIST");
+                            fBaseLine[chId]->SetY1(bsl); fBaseLine[chId]->SetY2(bsl);
                             
-                            fBaseLine[chId]->SetX1(0);
-                            fBaseLine[chId]->SetY1(bsl);
-                            fBaseLine[chId]->SetX2(nPts * 2.5);
-                            fBaseLine[chId]->SetY2(bsl);
-                            fBaseLine[chId]->Draw();
-
-                            c->cd(i + 1 + nCh);
-                            fSpectrum[chId]->Draw("HIST");
-
                             needUpdate = true;
-                        }
-                        
-                        if (needUpdate) {
-                            c->Modified();
-                            c->Update();
-                            // [핵심 픽스 2] ProcessEvents 삭제로 무한 대기 록(Lock) 원천 차단
                         }
                     }
                     evtData->Clear("C"); 
                 }
                 if (obj) delete obj; 
             }
-            delete latestMess; 
+            delete mess; 
+        }
+
+        // 💡 [수정] Warning 해결을 위해 size_t 사용
+        if (needUpdate && !fCurrentChs.empty()) {
+            TCanvas *c = fEcanvas->GetCanvas();
+            for (size_t i = 0; i < fCurrentChs.size(); i++) {
+                int chId = fCurrentChs[i];
+                c->cd(i + 1);
+                double maxV = fWaveform[chId]->GetMaximum();
+                double minV = fWaveform[chId]->GetMinimum();
+                double margin = (maxV - minV) * 0.1;
+                fWaveform[chId]->GetYaxis()->SetRangeUser(minV - (margin < 5 ? 5 : margin), maxV + (margin < 5 ? 5 : margin));
+                
+                fWaveform[chId]->Draw("HIST");
+                fBaseLine[chId]->SetX2(fWaveform[chId]->GetNbinsX() * 2.5);
+                fBaseLine[chId]->Draw();
+                
+                c->cd(i + 1 + fCurrentChs.size());
+                fSpectrum[chId]->Draw("HIST");
+            }
+            c->Modified();
+            c->Update();
         }
     }
 }
 
+// ---------------------------------------------------------
+// 💡 [누락되었던 부분] 실행 파일의 진입점(Entry Point)
+// ---------------------------------------------------------
 int main(int argc, char **argv) {
-    TApplication app("MonitorApp", &argc, argv);
-    new OnlineMonitor(gClient->GetRoot(), 1200, 800); 
+    TApplication app("OnlineMonitorApp", &argc, argv);
+    
+    // 메인 윈도우 생성 (가로 1200, 세로 800)
+    OnlineMonitor* monitor = new OnlineMonitor(gClient->GetRoot(), 1200, 800);
+    
     app.Run();
     return 0;
 }

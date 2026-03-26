@@ -46,7 +46,6 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
     tree->Branch("RawData", &treeEvtData);
 
     TSocket* socket = nullptr;
-    auto lastNetTime = std::chrono::steady_clock::now();
     auto lastConnTry = std::chrono::steady_clock::now(); 
 
     if (useDisplay) {
@@ -55,7 +54,7 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
         
         socket = new TSocket("localhost", 9090);
         if (socket->IsValid()) {
-            socket->SetOption(kNoBlock, 1); // 💡 [Phase 6] 논블로킹(Non-blocking) 통신 설정
+            socket->SetOption(kNoBlock, 1);
             ELog::Print(ELog::INFO, "Connected to Display Server (localhost:9090)");
         } else {
             delete socket; socket = nullptr;
@@ -79,12 +78,10 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
             if (useDisplay && (!socket || !socket->IsValid())) {
                 if (std::chrono::duration_cast<std::chrono::seconds>(now - lastConnTry).count() >= 2) {
                     if (socket) { delete socket; socket = nullptr; }
-                    
-                    Int_t oldLevel = gErrorIgnoreLevel;
-                    gErrorIgnoreLevel = kFatal; 
+                    Int_t oldLevel = gErrorIgnoreLevel; gErrorIgnoreLevel = kFatal; 
                     socket = new TSocket("localhost", 9090);
                     if (socket->IsValid()) {
-                        socket->SetOption(kNoBlock, 1); // 💡 재연결 시에도 논블로킹 강제
+                        socket->SetOption(kNoBlock, 1);
                         ELog::Print(ELog::INFO, "Reconnected to Display Server!");
                     } else {
                         delete socket; socket = nullptr;
@@ -94,25 +91,18 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
                 }
             }
 
-            // 💡 [Phase 6] TSocket Backpressure 방어: 50ms 마다 가장 최신 1개 이벤트만 렌더링 (Safe-Drop)
-            if (socket && socket->IsValid() && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastNetTime).count() > 50) {
+            // 💡 [핵심] 50ms 스로틀링 완전 해제. 버려지는 이벤트 없이 모두 전송!
+            if (socket && socket->IsValid()) {
                 TMessage mess(kMESS_OBJECT);
                 mess.WriteObject(treeEvtData);
                 
-                Int_t oldLevel = gErrorIgnoreLevel;
-                gErrorIgnoreLevel = kFatal; 
-                
+                Int_t oldLevel = gErrorIgnoreLevel; gErrorIgnoreLevel = kFatal; 
                 int snd = socket->Send(mess);
-                
                 gErrorIgnoreLevel = oldLevel;
                 
-                // -4는 ROOT TSocket의 EWOULDBLOCK (소켓 버퍼가 가득 차서 보낼 수 없음)이므로 끊지 않고 드롭시킴
                 if (snd <= 0 && snd != -4) { 
-                    socket->Close();
-                    delete socket;
-                    socket = nullptr;
+                    socket->Close(); delete socket; socket = nullptr;
                 }
-                lastNetTime = now;
             }
 
             temp->Clear("C"); 
@@ -132,28 +122,27 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
 
 int main(int argc, char ** argv) {
     ROOT::EnableThreadSafety(); 
-    
-    // 💡 [여기에 추가됨] 모니터 강제 종료 시 발생하는 Broken Pipe 크래시 원천 차단
     std::signal(SIGPIPE, SIG_IGN); 
-    
     std::signal(SIGINT, SigIntHandler);
     std::signal(SIGTERM, SigIntHandler);
 
     TString configFile = "";
     TString outFile = "data.root";
     int presetNEvt = 0;
+    bool useDisplay = false; 
     
     int opt;
-    while((opt = getopt(argc, argv, "f:n:o:")) != -1) {
+    while((opt = getopt(argc, argv, "f:n:o:d")) != -1) {
         switch(opt) {
             case 'f': configFile = optarg; break;
             case 'n': presetNEvt = atoi(optarg); break;
             case 'o': outFile = optarg; break;
+            case 'd': useDisplay = true; break; 
         }
     }
 
     if(configFile == "") {
-        ELog::Print(ELog::ERROR, "Usage: frontend -f <ticket.config> [-o <out.root>] [-n <events>]");
+        ELog::Print(ELog::ERROR, "Usage: frontend -f <ticket.config> [-o <out.root>] [-n <events>] [-d]");
         return 1;
     }
 
@@ -177,13 +166,12 @@ int main(int argc, char ** argv) {
         fadc.NFADC400open(mid);
         unsigned long stat = fadc.NFADC400read_STAT(mid);
         if (stat == 0xFFFFFFFF) {
-            ELog::Print(ELog::FATAL, "==============================================================");
             ELog::Print(ELog::FATAL, Form(" [FATAL ERROR] FADC Board (MID: %lu) Not Found or Mismatch!", mid));
             vme.VMEclose();
             return 1;
         }
         
-        ELog::Print(ELog::INFO, Form("Board MID %lu connected. Writing parameters to Hardware...", mid));
+        ELog::Print(ELog::INFO, Form("Board MID %lu connected. Writing parameters...", mid));
         fadc.NFADC400reset(mid);
         fadc.NFADC400write_RL(mid, bd->RL());
         fadc.NFADC400write_TLT(mid, bd->TLT());
@@ -221,15 +209,14 @@ int main(int argc, char ** argv) {
     int dataPoints = recordLength * 128;            
     int hevt = (recordLength > 4) ? (4096 / recordLength) : 512;
     
-    // 💡 [Phase 6] VME 마이크로 트랜잭션 오버헤드 제거를 위한 1MB 단위의 Bulk-Fetch 메모리 할당
     char* bulk_buffers[32][4] = {nullptr}; 
     for (int i = 0; i < nbd; i++) {
         for (int j = 0; j < 4; j++) {
-            bulk_buffers[i][j] = new char[0x100000]; // 채널당 1MB 할당 (Dump & Demux용)
+            bulk_buffers[i][j] = new char[0x100000];
         }
     }
 
-    std::thread consumerTh(ConsumerWorker, outFile.Data(), true);
+    std::thread consumerTh(ConsumerWorker, outFile.Data(), useDisplay);
     ELog::Print(ELog::INFO, "DAQ Running. Press ABORT to stop.");
 
     int bufnum = 0;
@@ -242,6 +229,7 @@ int main(int argc, char ** argv) {
     TStopwatch sw; sw.Start();
     double lastTime = 0.0;
     int lastEvt = 0;
+    auto lastPrintTime = std::chrono::steady_clock::now();
 
     while (g_isRunning) {
         if (g_dataQueue.Size() > 20000) {
@@ -253,14 +241,12 @@ int main(int argc, char ** argv) {
         int isFill = 0;
         int zombie_err_cnt = 0;
 
-        // 💡 [Phase 6] Zombie 무한 루프 방어 로직 적용
         while (g_isRunning && !isFill) {
             unsigned long stat = (bufnum == 0) ? fadc.NFADC400read_RunL(primary_mid) : fadc.NFADC400read_RunH(primary_mid);
-            
             if (stat == 0xFFFFFFFF) {
                 zombie_err_cnt++;
                 if (zombie_err_cnt > 10) {
-                    ELog::Print(ELog::FATAL, "\n[FATAL] VME Bus Disconnected or Timeout (-1). Triggering Graceful Shutdown!");
+                    ELog::Print(ELog::FATAL, "\n[FATAL] VME Bus Disconnected or Timeout. Shutting down!");
                     g_isRunning = false;
                     break;
                 }
@@ -268,21 +254,17 @@ int main(int argc, char ** argv) {
                 continue;
             }
             zombie_err_cnt = 0;
-            isFill = (stat == 0); // 0일 때 버퍼 가득 참
+            isFill = (stat == 0); 
             if (!isFill) std::this_thread::yield(); 
         }
         if(!g_isRunning) break;
 
-        // 💡 [Phase 6] Zero-Deadtime Ping-Pong 트리거 재배열
-        // 현재 버퍼의 데이터를 가져오기 "직전"에 반대편 버퍼를 먼저 가동시켜 하드웨어의 휴식(Deadtime)을 0%로 만듦!
         int next_bufnum = 1 - bufnum; 
         for (int i = 0; i < nbd; i++) {
             if (next_bufnum == 1) fadc.NFADC400startH(runInfo->GetFadcBD(i)->MID());
             else                  fadc.NFADC400startL(runInfo->GetFadcBD(i)->MID());
         }
 
-        // 💡 [Phase 6] Dump & Demux (최적화의 핵심)
-        // 개별 이벤트를 읽는 for문을 버리고, 1페이지 전체를 USB 벌크 전송으로 단숨에 퍼옵니다. (Overhead 99% 감소)
         for (int i = 0; i < nbd; i++) {
             FadcBD* bd = runInfo->GetFadcBD(i);
             if (bd->IsTrgBD()) continue;
@@ -292,7 +274,6 @@ int main(int argc, char ** argv) {
             }
         }
 
-        // 가져온 1MB의 메모리 덩어리를 PC 메모리(CPU)상에서 고속으로 분해하여 Object에 적재합니다.
         for (int evtIdx = 0; evtIdx < hevt; evtIdx++) {
             RawData* eventData = nullptr;
             if (!g_freeQueue.TryPop(eventData)) {
@@ -307,12 +288,11 @@ int main(int argc, char ** argv) {
                     int global_chId = (bd->MID() * 4) + bd->CID(j);
                     RawChannel* chObj = eventData->AddChannel(global_chId, dataPoints);
                     
-                    // 이벤트 데이터가 위치한 메모리 오프셋 계산 (2 Bytes/Point)
                     unsigned char* evt_ptr = (unsigned char*)bulk_buffers[i][j] + (evtIdx * dataPoints * 2);
                     
                     for (int k = 0; k < dataPoints; k++) {
-                        unsigned short val = (evt_ptr[k*2 + 1] << 8) | evt_ptr[k*2]; // LSB-MSB 병합
-                        chObj->AddSample(val & 0x0FFF); // 12-bit 마스킹
+                        unsigned short val = (evt_ptr[k*2 + 1] << 8) | evt_ptr[k*2]; 
+                        chObj->AddSample(val & 0x0FFF); 
                     }
                 }
             }
@@ -327,7 +307,8 @@ int main(int argc, char ** argv) {
 
         bufnum = next_bufnum; 
 
-        if (nevt % (hevt * 4) == 0) {
+        auto nowTime = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(nowTime - lastPrintTime).count() > 500) {
             double curTime = sw.RealTime(); sw.Continue();
             double dt = curTime - lastTime;
             double rate = (dt > 0) ? (nevt - lastEvt) / dt : 0.0;
@@ -336,6 +317,7 @@ int main(int argc, char ** argv) {
             printf("\r\033[1;32m ⚡ Events: %-8d\033[0m | \033[1;33m⏱ Time: %-5.1f s\033[0m | \033[1;35m🔥 Rate: %-6.1f Hz\033[0m | \033[1;36m💾 DataQ: %-4zu\033[0m | \033[1;35m♻ Pool: %-4zu\033[0m", 
                    nevt, curTime, rate, g_dataQueue.Size(), g_freeQueue.Size());
             fflush(stdout);
+            lastPrintTime = nowTime;
         }
     }
 
@@ -351,7 +333,6 @@ int main(int argc, char ** argv) {
     while (g_freeQueue.TryPop(leftover)) { leftover->Clear("C"); delete leftover; }
     while (g_dataQueue.TryPop(leftover)) { leftover->Clear("C"); delete leftover; }
 
-    // Bulk 버퍼 메모리 해제
     for (int i = 0; i < nbd; i++) {
         for (int j = 0; j < 4; j++) {
             delete[] bulk_buffers[i][j];

@@ -27,7 +27,8 @@ public:
     void RunInteractive();
 
 private:
-    void AnalyzeWaveform(const std::vector<unsigned short>& wave, double &bsl, double &amp, double &time, double &charge, std::vector<double>* vTime, std::vector<double>* vDrop);
+    // 💡 [핵심] outWave 포인터를 받아 Pmt 객체에 직접 기록하도록 변경
+    void AnalyzeWaveform(const std::vector<unsigned short>& wave, double &bsl, double &amp, double &time, double &charge, float* outWave);
     void ShowEvent(int entry);
 
     bool _isValid;
@@ -48,9 +49,6 @@ private:
     TCanvas* _canvasEvent;
     
     static const int MAX_CH = 32;
-    TH1F* _hQtot[MAX_CH]; 
-    std::vector<double>* _wTime[MAX_CH];
-    std::vector<double>* _wDrop[MAX_CH];
     TH1F* _histWave[MAX_CH]; 
     TLine* _lineBsl[MAX_CH]; 
 };

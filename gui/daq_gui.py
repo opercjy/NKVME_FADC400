@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                              QGroupBox, QMessageBox, QTextEdit, QComboBox, 
                              QLCDNumber, QProgressBar, QTabWidget, QSpinBox, 
-                             QRadioButton, QButtonGroup, QSplitter)
+                             QRadioButton, QButtonGroup, QSplitter, QCheckBox)
 from PyQt5.QtCore import QProcess, Qt, QRegExp, QTimer
 from PyQt5.QtGui import QRegExpValidator, QTextCursor, QFont
 
@@ -158,17 +158,14 @@ class DAQControlCenter(QMainWindow):
 
         self.right_widget = QWidget()
         right_panel = QVBoxLayout(self.right_widget)
-        # [수정] 우측 테두리 잘림을 방지하기 위해 마진을 넉넉히 줍니다.
         right_panel.setContentsMargins(5, 5, 5, 5)
         
         dash_group = QGroupBox("Live Status Dashboard")
-        # [수정] margin-top을 줘서 타이틀 글자가 테두리와 겹치지 않게 합니다.
         dash_group.setStyleSheet("""
             QGroupBox { font-weight: bold; border: 2px solid #9E9E9E; background-color: #FAFAFA; border-radius: 8px; margin-top: 20px; }
             QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; padding: 0 5px; color: #424242; }
         """)
         dash_layout = QVBoxLayout()
-        # [수정] 내부 마진의 상단(top) 여백을 충분히 주어 글자와 겹치지 않게 합니다.
         dash_layout.setContentsMargins(15, 25, 15, 15) 
         dash_layout.setSpacing(10) 
         
@@ -204,6 +201,14 @@ class DAQControlCenter(QMainWindow):
         self.lcd_events.setMinimumHeight(45) 
         dash_layout.addWidget(self.lcd_events)
         
+        h_sys = QHBoxLayout()
+        self.lbl_q = QLabel("DataQ: 0")
+        self.lbl_q.setStyleSheet("background: #FFF9C4; border: 1px solid #FBC02D; padding: 3px; color: #F57F17; font-weight:bold; border-radius:3px;")
+        self.lbl_p = QLabel("Pool: 0")
+        self.lbl_p.setStyleSheet("background: #C8E6C9; border: 1px solid #388E3C; padding: 3px; color: #1B5E20; font-weight:bold; border-radius:3px;")
+        h_sys.addWidget(self.lbl_q); h_sys.addWidget(self.lbl_p)
+        dash_layout.addLayout(h_sys)
+        
         dash_layout.addWidget(QLabel("Automation Progress:"))
         self.auto_progress = QProgressBar(); self.auto_progress.setAlignment(Qt.AlignCenter); self.auto_progress.setFixedHeight(20)
         dash_layout.addWidget(self.auto_progress)
@@ -220,7 +225,6 @@ class DAQControlCenter(QMainWindow):
         
         self.middle_splitter.addWidget(left_widget)
         self.middle_splitter.addWidget(self.right_widget)
-        # [수정] 대시보드 창 크기를 약간 줄입니다 (7:3 비율)
         self.middle_splitter.setStretchFactor(0, 7)
         self.middle_splitter.setStretchFactor(1, 3)
         
@@ -230,13 +234,11 @@ class DAQControlCenter(QMainWindow):
         bottom_layout.setContentsMargins(0, 5, 0, 0)
         
         log_group = QGroupBox("System Console")
-        # [수정] 콘솔 그룹박스 CSS 타이틀 겹침 방지 처리
         log_group.setStyleSheet("""
             QGroupBox { font-weight: bold; border: 2px solid #B0BEC5; border-radius: 8px; margin-top: 20px; }
             QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 15px; padding: 0 5px; color: #455A64; }
         """)
         log_layout = QVBoxLayout()
-        # [수정] Top 마진을 25로 늘려서 하드웨어 상태 라벨이 테두리에 가려지지 않게 함
         log_layout.setContentsMargins(15, 25, 15, 15) 
         
         self.lbl_hw_status = QLabel("Hardware Status: Waiting for DAQ...")
@@ -265,7 +267,7 @@ class DAQControlCenter(QMainWindow):
             self.right_widget.hide()
             self.btn_toggle_dash.setText("◀ Show Dashboard")
             self.btn_toggle_dash.setStyleSheet("background-color: #455A64; color: white; font-weight: bold; padding: 8px;")
-            self.setMinimumWidth(700) # 좌측 탭이 안 찌그러질 정도의 안전 마진
+            self.setMinimumWidth(700) 
             self.resize(700, self.height())     
         else:
             self.right_widget.show()
@@ -282,6 +284,12 @@ class DAQControlCenter(QMainWindow):
         # [1] Manual DAQ
         tab_manual = QWidget(); manual_layout = QVBoxLayout(tab_manual)
         manual_layout.setContentsMargins(8, 8, 8, 8); manual_layout.setSpacing(8)
+        
+        # 💡 [핵심] 체크박스 1개 추가로 직관적 DQM 제어
+        self.chk_enable_mon = QCheckBox("📡 Enable Real-time DQM (Send Data to Monitor)")
+        self.chk_enable_mon.setChecked(True)
+        self.chk_enable_mon.setStyleSheet("color: #1976D2; font-weight: bold; margin-bottom: 5px;")
+        manual_layout.addWidget(self.chk_enable_mon)
         
         self.combo_config = QComboBox()
         self.combo_config.currentIndexChanged.connect(self.update_config_summary) 
@@ -514,6 +522,10 @@ class DAQControlCenter(QMainWindow):
         out_root = os.path.join(self.data_output_dir, f"run_{run_num}.root") 
         args = ["-f", self.combo_config.currentData(), "-o", out_root]
         
+        # 💡 [핵심] 체크박스 상태에 따라 옵션 주입
+        if self.chk_enable_mon.isChecked():
+            args.append("-d")
+        
         if self.rb_manual_evt.isChecked():
             val = self.spin_manual_val.value(); args.extend(["-n", str(val)])
             self.print_log(f"\033[1;36m[SYSTEM]\033[0m Manual DAQ will stop after {val} events.")
@@ -547,6 +559,10 @@ class DAQControlCenter(QMainWindow):
         out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root") 
         
         args = ["-f", cfg_path, "-o", out_root]; val = self.spin_scan_val.value()
+        
+        if self.chk_enable_mon.isChecked():
+            args.append("-d")
+            
         if self.rb_scan_evt.isChecked():
             args.extend(["-n", str(val)]); self.print_log(f"\n\033[1;36m[AUTO]\033[0m Scan Step: THR={self.scan_current_val} ({val} Events)")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
@@ -577,6 +593,10 @@ class DAQControlCenter(QMainWindow):
         out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root")
         
         args = ["-f", self.combo_config.currentData(), "-o", out_root]; val = self.spin_chunk_val.value()
+        
+        if self.chk_enable_mon.isChecked():
+            args.append("-d")
+            
         if self.rb_long_evt.isChecked():
             args.extend(["-n", str(val)]); self.print_log(f"\n\033[1;36m[AUTO]\033[0m Long Run Chunk {self.current_subrun_idx} ({val} Events)...")
             self.daq_process.start(os.path.join(CURRENT_DIR, EXE_FRONTEND), args)
@@ -626,7 +646,12 @@ class DAQControlCenter(QMainWindow):
                     self.lcd_events.display(int(match_ev.group(1)))
                     self.final_events = match_ev.group(1)
                     self.lbl_hw_status.setText(self.ansi_to_html(subline))
-                    continue 
+
+                match_q = re.search(r'DataQ:\s*(\d+)', clean_line)
+                if match_q: self.lbl_q.setText(f"DataQ: {match_q.group(1)}")
+                
+                match_p = re.search(r'Pool:\s*(\d+)', clean_line)
+                if match_p: self.lbl_p.setText(f"Pool: {match_p.group(1)}")
 
                 match_sum_ev = re.search(r'Total Events\s*:\s*(\d+)', clean_line)
                 if match_sum_ev: self.final_events = match_sum_ev.group(1)
