@@ -42,6 +42,7 @@ class DAQControlCenter(QMainWindow):
         self.final_events = "0"
         self.final_time = "0.0"
         self.final_rate = "0.0"
+        self.last_was_progress = False 
         
         self.daq_process = QProcess(self)
         self.daq_process.readyReadStandardOutput.connect(self.handle_stdout)
@@ -140,6 +141,10 @@ class DAQControlCenter(QMainWindow):
         self.btn_stop_mon = QPushButton("🙈 Hide Monitor")
         self.btn_stop_mon.setStyleSheet("background-color: #9E9E9E; color: white; font-weight: bold; padding: 8px;")
         self.btn_stop_mon.clicked.connect(self.stop_monitor)
+
+        self.btn_clear_mon = QPushButton("🔄 Clear Monitor")
+        self.btn_clear_mon.setStyleSheet("background-color: #00BCD4; color: white; font-weight: bold; padding: 8px;")
+        self.btn_clear_mon.clicked.connect(self.clear_monitor)
         
         self.btn_toggle_dash = QPushButton("▶ Hide Dashboard")
         self.btn_toggle_dash.setStyleSheet("background-color: #607D8B; color: white; font-weight: bold; padding: 8px;")
@@ -151,6 +156,7 @@ class DAQControlCenter(QMainWindow):
         
         btn_layout.addWidget(self.btn_start_mon)
         btn_layout.addWidget(self.btn_stop_mon)
+        btn_layout.addWidget(self.btn_clear_mon) 
         btn_layout.addWidget(self.btn_toggle_dash)
         btn_layout.addWidget(self.btn_stop)
         btn_group.setLayout(btn_layout)
@@ -246,6 +252,7 @@ class DAQControlCenter(QMainWindow):
         self.lbl_hw_status.setStyleSheet("background-color: #ECEFF1; color: #E65100; padding: 5px; border-radius: 4px; border: 1px solid #CFD8DC;")
         log_layout.addWidget(self.lbl_hw_status)
 
+        # 💡 [UI 수정] 밝은 회색 테마(Light Theme) 유지 + 텍스트를 어둡게
         self.log_viewer = QTextEdit(); self.log_viewer.setReadOnly(True)
         self.log_viewer.setStyleSheet("""
             QTextEdit {
@@ -281,11 +288,9 @@ class DAQControlCenter(QMainWindow):
         self.print_log(f"\033[1;36m[SYSTEM]\033[0m Data output directory changed to: {self.data_output_dir}")
 
     def init_daq_tabs(self):
-        # [1] Manual DAQ
         tab_manual = QWidget(); manual_layout = QVBoxLayout(tab_manual)
         manual_layout.setContentsMargins(8, 8, 8, 8); manual_layout.setSpacing(8)
         
-        # 💡 [핵심] 체크박스 1개 추가로 직관적 DQM 제어
         self.chk_enable_mon = QCheckBox("📡 Enable Real-time DQM (Send Data to Monitor)")
         self.chk_enable_mon.setChecked(True)
         self.chk_enable_mon.setStyleSheet("color: #1976D2; font-weight: bold; margin-bottom: 5px;")
@@ -330,7 +335,6 @@ class DAQControlCenter(QMainWindow):
         btn_m.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; font-weight:bold; font-size: 13px;")
         btn_m.clicked.connect(self.start_manual_daq); manual_layout.addWidget(btn_m); manual_layout.addStretch()
         
-        # [2] THR Scan
         tab_scan = QWidget(); scan_layout = QVBoxLayout(tab_scan)
         scan_layout.setContentsMargins(8, 8, 8, 8); scan_layout.setSpacing(6)
         scan_layout.addWidget(QLabel("자동으로 Threshold(THR) 값을 변경하며 스캔합니다."))
@@ -365,7 +369,6 @@ class DAQControlCenter(QMainWindow):
         btn_s.setStyleSheet("background-color: #FF9800; color: white; padding: 10px; font-weight:bold;")
         btn_s.clicked.connect(self.start_thr_scan); scan_layout.addWidget(btn_s); scan_layout.addStretch()
 
-        # [3] Long Run
         tab_subrun = QWidget(); subrun_layout = QVBoxLayout(tab_subrun)
         subrun_layout.setContentsMargins(8, 8, 8, 8); subrun_layout.setSpacing(6)
         subrun_layout.addWidget(QLabel("지정된 조건(시간/이벤트) 단위로 파일을 분할 수집합니다."))
@@ -420,6 +423,11 @@ class DAQControlCenter(QMainWindow):
             self.monitor_process.terminate()
             self.print_log("\033[1;36m[MONITOR]\033[0m Online Display hidden/stopped.")
 
+    def clear_monitor(self):
+        if self.monitor_process.state() == QProcess.Running:
+            self.monitor_process.write(b"c\n")
+            self.print_log("\033[1;36m[MONITOR]\033[0m Histograms cleared by user command.")
+
     def update_clock(self):
         self.clock_lbl.setText(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         total, used, free = shutil.disk_usage(self.data_output_dir)
@@ -440,54 +448,104 @@ class DAQControlCenter(QMainWindow):
         self.update_config_summary()
 
     def ansi_to_html(self, text):
+        """ 밝은 배경(Light Theme)에 어울리는 가독성 높은 어두운 원색으로 ANSI 컬러 재매핑 """
         text = text.replace('<', '&lt;').replace('>', '&gt;')
-        text = re.sub(r'\033\[1;31m(.*?)\033\[0m', r'<span style="color:#D32F2F; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;32m(.*?)\033\[0m', r'<span style="color:#2E7D32; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;33m(.*?)\033\[0m', r'<span style="color:#E65100; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;34m(.*?)\033\[0m', r'<span style="color:#1565C0; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;35m(.*?)\033\[0m', r'<span style="color:#8E24AA; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;36m(.*?)\033\[0m', r'<span style="color:#00838F; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;37m(.*?)\033\[0m', r'<span style="color:#212121; font-weight:bold;">\1</span>', text) 
-        text = re.sub(r'\033\[1;41m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#D32F2F; font-weight:bold; padding:2px;">\1</span>', text) 
-        text = re.sub(r'\033\[1;45m(.*?)\033\[0m', r'<span style="color:#FFFFFF; background-color:#8E24AA; font-weight:bold; padding:2px;">\1</span>', text) 
+        text = re.sub(r'\033\[1;31m(.*?)\033\[0m', r'<span style="color:#D32F2F; font-weight:bold;">\1</span>', text) # Deep Red
+        text = re.sub(r'\033\[1;32m(.*?)\033\[0m', r'<span style="color:#2E7D32; font-weight:bold;">\1</span>', text) # Deep Green
+        text = re.sub(r'\033\[1;33m(.*?)\033\[0m', r'<span style="color:#E65100; font-weight:bold;">\1</span>', text) # Deep Orange/Yellow
+        text = re.sub(r'\033\[1;34m(.*?)\033\[0m', r'<span style="color:#1565C0; font-weight:bold;">\1</span>', text) # Deep Blue
+        text = re.sub(r'\033\[1;35m(.*?)\033\[0m', r'<span style="color:#8E24AA; font-weight:bold;">\1</span>', text) # Deep Purple
+        text = re.sub(r'\033\[1;36m(.*?)\033\[0m', r'<span style="color:#00838F; font-weight:bold;">\1</span>', text) # Deep Teal/Cyan
+        text = re.sub(r'\033\[1;37m(.*?)\033\[0m', r'<span style="color:#212121; font-weight:bold;">\1</span>', text) # Dark Gray
         text = re.sub(r'\033\[[\d;]*m', '', text) 
         return text
 
-    def print_log(self, text, is_error=False):
+    def print_log(self, text, is_error=False, is_progress=False):
         for line in text.splitlines():
             if not line.strip(): continue
+            
             if is_error:
                 clean_line = re.sub(r'\033\[[\d;]*m', '', line)
                 safe_line = clean_line.replace('<', '&lt;').replace('>', '&gt;')
-                self.log_viewer.append(f'<span style="color:#D32F2F; font-weight:bold;">{safe_line}</span>')
+                html_line = f'<span style="color:#D32F2F; font-weight:bold;">{safe_line}</span>'
             else:
                 html_line = self.ansi_to_html(line)
+
+            cursor = self.log_viewer.textCursor()
+            if is_progress:
+                if self.last_was_progress:
+                    cursor.movePosition(QTextCursor.End)
+                    cursor.select(QTextCursor.BlockUnderCursor)
+                    cursor.removeSelectedText()
+                    cursor.insertBlock() 
+                    cursor.insertHtml(html_line)
+                else:
+                    self.log_viewer.append(html_line)
+                self.last_was_progress = True
+            else:
+                if self.last_was_progress:
+                    cursor.movePosition(QTextCursor.End)
+                    cursor.insertBlock()
                 self.log_viewer.append(html_line)
+                self.last_was_progress = False
+                
         self.log_viewer.moveCursor(QTextCursor.End)
 
     def handle_mon_stdout(self):
         raw_data = self.monitor_process.readAllStandardOutput().data().decode("utf8", errors="replace")
         for line in raw_data.split('\n'):
-            for subline in line.split('\r'):
+            for subline in line.split('\r'): 
                 if subline.strip():
                     self.print_log(f"\033[1;34m[MONITOR]\033[0m {subline.strip()}")
 
     def handle_mon_stderr(self):
         raw_data = self.monitor_process.readAllStandardError().data().decode("utf8", errors="replace")
         for line in raw_data.split('\n'):
-            for subline in line.split('\r'):
+            for subline in line.split('\r'): 
                 if subline.strip():
                     self.print_log(f"\033[1;31m[MON ERROR]\033[0m {subline.strip()}", is_error=True)
 
-    def generate_scan_config(self, base_cfg, target_thr):
-        with open(base_cfg, 'r') as f: lines = f.readlines()
-        with open(TEMP_CONFIG, 'w') as f:
-            for line in lines:
-                if line.strip().startswith("THR"):
-                    parts = line.split()
-                    f.write(f"THR    {parts[1]}    " + "    ".join([str(target_thr)] * (len(parts)-2)) + "\n")
-                else: f.write(line)
-        return TEMP_CONFIG
+    def handle_stdout(self):
+        raw_data = self.daq_process.readAllStandardOutput().data().decode("utf8", errors="replace")
+        for line in raw_data.split('\n'):
+            for subline in line.split('\r'): 
+                if not subline.strip(): continue
+                clean_line = re.sub(r'\033\[[\d;]*m', '', subline)
+                
+                match_rate = re.search(r'Rate:\s*([0-9.]+)\s*Hz', clean_line)
+                if match_rate:
+                    self.lbl_trigger_rate.setText(f"Trigger Rate: {match_rate.group(1)} Hz")
+                    self.final_rate = match_rate.group(1)
+                
+                match_time = re.search(r'Time:\s*([0-9.]+)\s*s', clean_line)
+                if match_time: self.final_time = match_time.group(1)
+                
+                match_ev = re.search(r'Events:\s*(\d+)', clean_line)
+                if match_ev: 
+                    self.lcd_events.display(int(match_ev.group(1)))
+                    self.final_events = match_ev.group(1)
+                    self.lbl_hw_status.setText(self.ansi_to_html(subline))
+
+                match_q = re.search(r'DataQ:\s*(\d+)', clean_line)
+                if match_q: self.lbl_q.setText(f"DataQ: {match_q.group(1)}")
+                
+                match_p = re.search(r'Pool:\s*(\d+)', clean_line)
+                if match_p: self.lbl_p.setText(f"Pool: {match_p.group(1)}")
+
+                match_sum_ev = re.search(r'Total Events\s*:\s*(\d+)', clean_line)
+                if match_sum_ev: self.final_events = match_sum_ev.group(1)
+                
+                match_sum_time = re.search(r'Total Elapsed Time\s*:\s*([0-9.]+)\s*sec', clean_line)
+                if match_sum_time: self.final_time = match_sum_time.group(1)
+                
+                match_sum_rate = re.search(r'Average Trigger Rate\s*:\s*([0-9.]+)\s*Hz', clean_line)
+                if match_sum_rate: self.final_rate = match_sum_rate.group(1)
+
+                is_progress_line = "Events:" in clean_line and "Time:" in clean_line
+                self.print_log(subline, is_error=False, is_progress=is_progress_line)
+
+    def handle_stderr(self):
+        self.print_log(self.daq_process.readAllStandardError().data().decode("utf8", errors="replace"), is_error=True)
 
     def pre_start_check(self):
         if not self.input_runnum.text().strip(): QMessageBox.warning(self, "Warning", "Run Number를 입력하세요!"); return False
@@ -522,7 +580,6 @@ class DAQControlCenter(QMainWindow):
         out_root = os.path.join(self.data_output_dir, f"run_{run_num}.root") 
         args = ["-f", self.combo_config.currentData(), "-o", out_root]
         
-        # 💡 [핵심] 체크박스 상태에 따라 옵션 주입
         if self.chk_enable_mon.isChecked():
             args.append("-d")
         
@@ -625,47 +682,6 @@ class DAQControlCenter(QMainWindow):
         self.print_log("\n\033[1;32m[SYSTEM]\033[0m === Sequences Completed Successfully! ===")
         self.lbl_trigger_rate.setText("Trigger Rate: 0.0 Hz")
         self.daq_start_timestamp = None
-
-    def handle_stdout(self):
-        raw_data = self.daq_process.readAllStandardOutput().data().decode("utf8", errors="replace")
-        for line in raw_data.split('\n'):
-            for subline in line.split('\r'): 
-                if not subline.strip(): continue
-                clean_line = re.sub(r'\033\[[\d;]*m', '', subline)
-                
-                match_rate = re.search(r'Rate:\s*([0-9.]+)\s*Hz', clean_line)
-                if match_rate:
-                    self.lbl_trigger_rate.setText(f"Trigger Rate: {match_rate.group(1)} Hz")
-                    self.final_rate = match_rate.group(1)
-                
-                match_time = re.search(r'Time:\s*([0-9.]+)\s*s', clean_line)
-                if match_time: self.final_time = match_time.group(1)
-                
-                match_ev = re.search(r'Events:\s*(\d+)', clean_line)
-                if match_ev: 
-                    self.lcd_events.display(int(match_ev.group(1)))
-                    self.final_events = match_ev.group(1)
-                    self.lbl_hw_status.setText(self.ansi_to_html(subline))
-
-                match_q = re.search(r'DataQ:\s*(\d+)', clean_line)
-                if match_q: self.lbl_q.setText(f"DataQ: {match_q.group(1)}")
-                
-                match_p = re.search(r'Pool:\s*(\d+)', clean_line)
-                if match_p: self.lbl_p.setText(f"Pool: {match_p.group(1)}")
-
-                match_sum_ev = re.search(r'Total Events\s*:\s*(\d+)', clean_line)
-                if match_sum_ev: self.final_events = match_sum_ev.group(1)
-                
-                match_sum_time = re.search(r'Total Elapsed Time\s*:\s*([0-9.]+)\s*sec', clean_line)
-                if match_sum_time: self.final_time = match_sum_time.group(1)
-                
-                match_sum_rate = re.search(r'Average Trigger Rate\s*:\s*([0-9.]+)\s*Hz', clean_line)
-                if match_sum_rate: self.final_rate = match_sum_rate.group(1)
-
-                self.print_log(subline)
-
-    def handle_stderr(self):
-        self.print_log(self.daq_process.readAllStandardError().data().decode("utf8", errors="replace"), is_error=True)
 
     def process_finished(self):
         if hasattr(self, 'current_run_id'):

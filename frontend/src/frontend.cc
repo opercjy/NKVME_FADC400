@@ -37,11 +37,12 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
     TFile* outFile = new TFile(outFileName, "UPDATE");
     if(!outFile || outFile->IsZombie()) {
         ELog::Print(ELog::FATAL, Form("Cannot update ROOT file: %s", outFileName));
-        g_isRunning = false;
-        return;
+        g_isRunning = false; return;
     }
 
-    TTree* tree = new TTree("FADC", "FADC Raw Data Tree");
+    TTree* tree = new TTree("FADC", "FADC Bulk Data Tree");
+    tree->SetAutoSave(0); 
+    
     RawData* treeEvtData = new RawData(); 
     tree->Branch("RawData", &treeEvtData);
 
@@ -49,16 +50,12 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
     auto lastConnTry = std::chrono::steady_clock::now(); 
 
     if (useDisplay) {
-        Int_t oldLevel = gErrorIgnoreLevel;
-        gErrorIgnoreLevel = kFatal; 
-        
+        Int_t oldLevel = gErrorIgnoreLevel; gErrorIgnoreLevel = kFatal; 
         socket = new TSocket("localhost", 9090);
         if (socket->IsValid()) {
             socket->SetOption(kNoBlock, 1);
             ELog::Print(ELog::INFO, "Connected to Display Server (localhost:9090)");
-        } else {
-            delete socket; socket = nullptr;
-        }
+        } else { delete socket; socket = nullptr; }
         gErrorIgnoreLevel = oldLevel; 
     }
 
@@ -74,7 +71,6 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
             nWrite++;
 
             auto now = std::chrono::steady_clock::now();
-
             if (useDisplay && (!socket || !socket->IsValid())) {
                 if (std::chrono::duration_cast<std::chrono::seconds>(now - lastConnTry).count() >= 2) {
                     if (socket) { delete socket; socket = nullptr; }
@@ -82,16 +78,12 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
                     socket = new TSocket("localhost", 9090);
                     if (socket->IsValid()) {
                         socket->SetOption(kNoBlock, 1);
-                        ELog::Print(ELog::INFO, "Reconnected to Display Server!");
-                    } else {
-                        delete socket; socket = nullptr;
-                    }
+                    } else { delete socket; socket = nullptr; }
                     gErrorIgnoreLevel = oldLevel; 
                     lastConnTry = now;
                 }
             }
 
-            // 💡 [핵심] 50ms 스로틀링 완전 해제. 버려지는 이벤트 없이 모두 전송!
             if (socket && socket->IsValid()) {
                 TMessage mess(kMESS_OBJECT);
                 mess.WriteObject(treeEvtData);
@@ -110,14 +102,12 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
         }
     }
 
-    tree->AutoSave();
-    outFile->Write();
-    outFile->Close();
-    delete outFile;
+    tree->AutoSave(); 
+    outFile->Write(); outFile->Close(); delete outFile;
 
     if (treeEvtData) { treeEvtData->Clear("C"); delete treeEvtData; }
     if (socket) { socket->Close(); delete socket; }
-    ELog::Print(ELog::INFO, Form("Consumer Thread: Saved %d events successfully.", nWrite));
+    ELog::Print(ELog::INFO, Form("Consumer Thread: Saved %d Bulk Blocks successfully.", nWrite));
 }
 
 int main(int argc, char ** argv) {
@@ -126,10 +116,8 @@ int main(int argc, char ** argv) {
     std::signal(SIGINT, SigIntHandler);
     std::signal(SIGTERM, SigIntHandler);
 
-    TString configFile = "";
-    TString outFile = "data.root";
-    int presetNEvt = 0;
-    bool useDisplay = false; 
+    TString configFile = ""; TString outFile = "data.root";
+    int presetNEvt = 0; bool useDisplay = false; 
     
     int opt;
     while((opt = getopt(argc, argv, "f:n:o:d")) != -1) {
@@ -150,13 +138,8 @@ int main(int argc, char ** argv) {
     if (!ConfigParser::Parse(configFile.Data(), runInfo)) return 1;
     runInfo->Print();
 
-    NK6UVME vme;
-    NKNFADC400 fadc;
-
-    if (vme.VMEopen() < 0) {
-        ELog::Print(ELog::FATAL, "Failed to open USB-VME Controller.");
-        return 1;
-    }
+    NK6UVME vme; NKNFADC400 fadc;
+    if (vme.VMEopen() < 0) { ELog::Print(ELog::FATAL, "Failed to open USB-VME Controller."); return 1; }
 
     int nbd = runInfo->GetNFadcBD();
     for (int i = 0; i < nbd; i++) {
@@ -166,56 +149,61 @@ int main(int argc, char ** argv) {
         fadc.NFADC400open(mid);
         unsigned long stat = fadc.NFADC400read_STAT(mid);
         if (stat == 0xFFFFFFFF) {
-            ELog::Print(ELog::FATAL, Form(" [FATAL ERROR] FADC Board (MID: %lu) Not Found or Mismatch!", mid));
-            vme.VMEclose();
-            return 1;
+            ELog::Print(ELog::FATAL, Form(" [FATAL ERROR] FADC Board (MID: %lu) Not Found!", mid));
+            vme.VMEclose(); return 1;
         }
         
-        ELog::Print(ELog::INFO, Form("Board MID %lu connected. Writing parameters...", mid));
+        int rst = bd->RST();
+        int resetTime = (rst & 0x4) ? 1 : 0;
+        int resetNEvt = (rst & 0x2) ? 1 : 0;
+        int resetRegi = (rst & 0x1) ? 1 : 0;
+        fadc.NFADC400write_RM(mid, resetTime, resetNEvt, resetRegi);
         fadc.NFADC400reset(mid);
+
         fadc.NFADC400write_RL(mid, bd->RL());
         fadc.NFADC400write_TLT(mid, bd->TLT());
         fadc.NFADC400write_TOW(mid, bd->TOW());
-        if (bd->DCE()) fadc.NFADC400enable_DCE(mid);
+        
+        if (bd->DCE() == 0) fadc.NFADC400enable_DCE(mid);
         else fadc.NFADC400disable_DCE(mid);
         
+        // 💡 [순서 주의] DACOFF 등 설정을 먼저 밀어넣음
         for (int ch = 0; ch < bd->NCHANNEL(); ch++) {
             int cid = bd->CID(ch) + 1; 
+            fadc.NFADC400write_DACOFF(mid, cid, bd->DACOFF(ch));
+            fadc.NFADC400write_DACGAIN(mid, cid, bd->DACGAIN(ch));
+            fadc.NFADC400write_DLY(mid, cid, bd->DLY(ch));
             fadc.NFADC400write_THR(mid, cid, bd->THR(ch));
             fadc.NFADC400write_POL(mid, cid, bd->POL(ch));
-            fadc.NFADC400write_DACOFF(mid, cid, bd->DACOFF(ch));
-            fadc.NFADC400write_DLY(mid, cid, bd->DLY(ch));
-            fadc.NFADC400write_DACGAIN(mid, cid, bd->DACGAIN(ch));
             fadc.NFADC400write_DT(mid, cid, bd->DT(ch));
             fadc.NFADC400write_CW(mid, cid, bd->CW(ch));
             
             int tm_val = bd->TM(ch);
-            int ew = (tm_val & 0x2) >> 1;
-            int en = (tm_val & 0x1);
+            int ew = (tm_val & 0x2) >> 1; int en = (tm_val & 0x1);
             fadc.NFADC400write_TM(mid, cid, ew, en);
-            
             fadc.NFADC400write_PCT(mid, cid, bd->PCT(ch));
             fadc.NFADC400write_PCI(mid, cid, bd->PCI(ch));
             fadc.NFADC400write_PWT(mid, cid, bd->PWT(ch));
         }
+
+        // 💡 [결정적 버그픽스] DACOFF 전압이 아날로그 회로에 정착할 시간을 준 뒤, Pedestal을 하드웨어에 각인!
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
+        fadc.NFADC400measure_PED(mid, 0); 
+        
+        ELog::Print(ELog::INFO, Form("Board MID %lu Hardware Pedestal measured:", mid));
+        for (int ch = 0; ch < bd->NCHANNEL(); ch++) {
+            unsigned long ped_val = fadc.NFADC400read_PED(mid, bd->CID(ch) + 1);
+            std::cout << "       [Ch " << bd->CID(ch) << "] Pedestal = " << ped_val << "\n";
+        }
     }
 
     TFile* hfile = new TFile(outFile.Data(), "RECREATE");
-    runInfo->Write();
-    hfile->Close();
-    delete hfile;
+    runInfo->Write(); hfile->Close(); delete hfile;
 
     int recordLength = runInfo->GetFadcBD(0)->RL(); 
     int dataPoints = recordLength * 128;            
     int hevt = (recordLength > 4) ? (4096 / recordLength) : 512;
     
-    char* bulk_buffers[32][4] = {nullptr}; 
-    for (int i = 0; i < nbd; i++) {
-        for (int j = 0; j < 4; j++) {
-            bulk_buffers[i][j] = new char[0x100000];
-        }
-    }
-
     std::thread consumerTh(ConsumerWorker, outFile.Data(), useDisplay);
     ELog::Print(ELog::INFO, "DAQ Running. Press ABORT to stop.");
 
@@ -227,8 +215,7 @@ int main(int argc, char ** argv) {
 
     int nevt = 0;
     TStopwatch sw; sw.Start();
-    double lastTime = 0.0;
-    int lastEvt = 0;
+    double lastTime = 0.0; int lastEvt = 0;
     auto lastPrintTime = std::chrono::steady_clock::now();
 
     while (g_isRunning) {
@@ -238,20 +225,17 @@ int main(int argc, char ** argv) {
         }
 
         unsigned long primary_mid = runInfo->GetFadcBD(0)->MID();
-        int isFill = 0;
-        int zombie_err_cnt = 0;
+        int isFill = 0; int zombie_err_cnt = 0;
 
         while (g_isRunning && !isFill) {
             unsigned long stat = (bufnum == 0) ? fadc.NFADC400read_RunL(primary_mid) : fadc.NFADC400read_RunH(primary_mid);
             if (stat == 0xFFFFFFFF) {
                 zombie_err_cnt++;
                 if (zombie_err_cnt > 10) {
-                    ELog::Print(ELog::FATAL, "\n[FATAL] VME Bus Disconnected or Timeout. Shutting down!");
-                    g_isRunning = false;
-                    break;
+                    ELog::Print(ELog::FATAL, "\n[FATAL] VME Bus Disconnected or Timeout (-1).");
+                    g_isRunning = false; break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue;
             }
             zombie_err_cnt = 0;
             isFill = (stat == 0); 
@@ -259,53 +243,39 @@ int main(int argc, char ** argv) {
         }
         if(!g_isRunning) break;
 
-        int next_bufnum = 1 - bufnum; 
-        for (int i = 0; i < nbd; i++) {
-            if (next_bufnum == 1) fadc.NFADC400startH(runInfo->GetFadcBD(i)->MID());
-            else                  fadc.NFADC400startL(runInfo->GetFadcBD(i)->MID());
-        }
-
+        RawData* dumpData = nullptr;
+        if (!g_freeQueue.TryPop(dumpData)) dumpData = new RawData(); 
+        
         for (int i = 0; i < nbd; i++) {
             FadcBD* bd = runInfo->GetFadcBD(i);
             if (bd->IsTrgBD()) continue;
+
             for (int j = 0; j < bd->NCHANNEL(); j++) {
                 int cid = bd->CID(j) + 1;
-                fadc.NFADC400dump_BUFFER(bd->MID(), cid, recordLength, bufnum, bulk_buffers[i][j]);
+                int global_chId = (bd->MID() * 4) + bd->CID(j);
+                
+                RawChannel* chObj = dumpData->AddChannel(global_chId);
+                chObj->ReserveBulk(hevt, dataPoints);
+                
+                fadc.NFADC400dump_BUFFER(bd->MID(), cid, recordLength, bufnum, (char*)chObj->GetBulkData());
+                fadc.NFADC400dump_TAG(bd->MID(), cid, recordLength, bufnum, (char*)chObj->GetTagData()); 
             }
         }
+        
+        g_dataQueue.Push(dumpData);
+        nevt += hevt; 
 
-        for (int evtIdx = 0; evtIdx < hevt; evtIdx++) {
-            RawData* eventData = nullptr;
-            if (!g_freeQueue.TryPop(eventData)) {
-                eventData = new RawData(); 
-            }
-            
-            for (int i = 0; i < nbd; i++) {
-                FadcBD* bd = runInfo->GetFadcBD(i);
-                if (bd->IsTrgBD()) continue;
-
-                for (int j = 0; j < bd->NCHANNEL(); j++) {
-                    int global_chId = (bd->MID() * 4) + bd->CID(j);
-                    RawChannel* chObj = eventData->AddChannel(global_chId, dataPoints);
-                    
-                    unsigned char* evt_ptr = (unsigned char*)bulk_buffers[i][j] + (evtIdx * dataPoints * 2);
-                    
-                    for (int k = 0; k < dataPoints; k++) {
-                        unsigned short val = (evt_ptr[k*2 + 1] << 8) | evt_ptr[k*2]; 
-                        chObj->AddSample(val & 0x0FFF); 
-                    }
-                }
-            }
-            g_dataQueue.Push(eventData);
-            nevt++;
-
-            if (presetNEvt > 0 && nevt >= presetNEvt) {
-                g_isRunning = false;
-                break;
-            }
+        if (presetNEvt > 0 && nevt >= presetNEvt) {
+            g_isRunning = false; break;
         }
 
-        bufnum = next_bufnum; 
+        if (bufnum == 0) {
+            bufnum = 1;
+            for (int i = 0; i < nbd; i++) fadc.NFADC400startL(runInfo->GetFadcBD(i)->MID());
+        } else {
+            bufnum = 0;
+            for (int i = 0; i < nbd; i++) fadc.NFADC400startH(runInfo->GetFadcBD(i)->MID());
+        }
 
         auto nowTime = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(nowTime - lastPrintTime).count() > 500) {
@@ -321,26 +291,14 @@ int main(int argc, char ** argv) {
         }
     }
 
-    g_isRunning = false;
-    printf("\n"); 
-    g_dataQueue.Stop(); 
-    
-    if (consumerTh.joinable()) {
-        consumerTh.join(); 
-    }
+    g_isRunning = false; printf("\n"); g_dataQueue.Stop(); 
+    if (consumerTh.joinable()) consumerTh.join(); 
 
     RawData* leftover = nullptr;
     while (g_freeQueue.TryPop(leftover)) { leftover->Clear("C"); delete leftover; }
     while (g_dataQueue.TryPop(leftover)) { leftover->Clear("C"); delete leftover; }
-
-    for (int i = 0; i < nbd; i++) {
-        for (int j = 0; j < 4; j++) {
-            delete[] bulk_buffers[i][j];
-        }
-    }
     
-    delete runInfo;
-    vme.VMEclose();
+    delete runInfo; vme.VMEclose();
 
     double totalTime = sw.RealTime();
     double avgRate = (totalTime > 0) ? (nevt / totalTime) : 0.0;

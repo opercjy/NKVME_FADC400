@@ -11,16 +11,14 @@ public:
     virtual ~RawData();
 
     virtual void Clear(Option_t * option = "") override;
-
-    // 객체 풀링(ConstructedAt)을 통해 새 객체를 힙 메모리 유실 없이 재활용
-    RawChannel* AddChannel(int chId, int nPoints);
+    RawChannel* AddChannel(int chId); // 💡 인자 단순화
     
     int GetNChannels() const;
     RawChannel* GetChannel(int i) const;
     TClonesArray* GetArray() const { return _channels; }
 
 private:
-    TClonesArray * _channels; //-> ROOT Splitting을 위한 주석 마커
+    TClonesArray * _channels; //->
 
     ClassDefOverride(RawData, 1)
 };
