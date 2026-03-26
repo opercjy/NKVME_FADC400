@@ -38,10 +38,12 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/gui/daq_gui.py
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/config_manager.py
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/prod_manager.py
           ${CMAKE_CURRENT_SOURCE_DIR}/gui/elog_manager.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/gui/path_controller.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/gui/daq_widgets.py  
      DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
      FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
-# 💡 [추가된 부분] 복사된 daq_gui.py의 이름을 fadc400_gui 로 깔끔하게 변경!
+# 복사된 daq_gui.py의 이름을 fadc400_gui 로 깔끔하게 변경!
 file(RENAME ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/daq_gui.py ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fadc400_gui)
 
 message(STATUS "Config, Rules, and GUI scripts successfully copied to build folder.")

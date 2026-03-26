@@ -61,3 +61,6 @@ echo "   - 🛠️ PATH updated (Added Project & Notice bin)"
 echo "   - 🔗 LD_LIBRARY_PATH updated (libNKVME_FADC400.so & Notice lib)"
 echo "   - 🧠 ROOT_INCLUDE_PATH updated (Objects Headers)"
 echo "=========================================================="
+
+# FADC400 실행 파일들을 어디서든 실행할 수 있도록 시스템 PATH에 등록
+export PATH="$(pwd)/bin:$PATH"

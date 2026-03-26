@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QGroupBox, QSpinBox, QGridLayout, 
                              QMessageBox, QCheckBox, QScrollArea, QComboBox)
 from PyQt5.QtCore import QTimer, pyqtSignal, Qt
+from PyQt5.QtGui import QFont
 
 try:
     from caen_libs import caenhvwrapper as hv
@@ -41,33 +42,167 @@ class HVControlPanel(QWidget):
         self.cb_enable_scm.toggled.connect(self.toggle_scm_mode)
         self.main_layout.addWidget(self.cb_enable_scm)
 
-        self.lbl_analog_mode = QLabel("⚠️ Analog HV Mode\n\n순수 아날로그 장비(ORTEC 등) 사용 중입니다.\n소프트웨어 제어 및 폴링이 중단되었습니다.")
-        self.lbl_analog_mode.setAlignment(Qt.AlignCenter)
-        self.lbl_analog_mode.setStyleSheet("font-weight: bold; color: #795548; background-color: #FFF3E0; padding: 20px;")
-        self.lbl_analog_mode.setVisible(False)
-        self.main_layout.addWidget(self.lbl_analog_mode)
+        # ==============================================================================
+        # 아날로그 모드 UI
+        # ==============================================================================
+        self.analog_widget = QWidget()
+        analog_layout = QVBoxLayout(self.analog_widget)
+        
+        lbl_analog_mode = QLabel("⚠️ Analog HV Mode")
+        lbl_analog_mode.setFont(QFont("Arial", 18, QFont.Bold))
+        lbl_analog_mode.setAlignment(Qt.AlignCenter)
+        lbl_analog_mode.setStyleSheet("color: #424242; padding-top: 20px;")
+        
+        lbl_analog_desc = QLabel("순수 아날로그 장비(ORTEC 등) 사용 중입니다.\n소프트웨어 제어 및 통신 폴링이 중단되었습니다.")
+        lbl_analog_desc.setFont(QFont("Arial", 12))
+        lbl_analog_desc.setAlignment(Qt.AlignCenter)
+        lbl_analog_desc.setStyleSheet("color: #616161; padding-bottom: 10px;")
+        
+        input_group = QGroupBox("⚡ Manual HV Input for Database")
+        input_group.setFont(QFont("Arial", 12, QFont.Bold))
+        input_group.setStyleSheet("""
+            QGroupBox {
+                border: 2px solid #90A4AE;
+                border-radius: 8px;
+                background-color: #FFFFFF;
+                margin-top: 15px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 15px;
+                color: #D84315;
+            }
+        """)
+        hv_input_layout = QHBoxLayout(input_group)
+        hv_input_layout.setContentsMargins(20, 30, 20, 20)
+        
+        lbl_v = QLabel("Voltage (V):")
+        lbl_v.setFont(QFont("Arial", 14, QFont.Bold))
+        self.input_analog_hv = QLineEdit()
+        self.input_analog_hv.setPlaceholderText("ex) -1700")
+        self.input_analog_hv.setMinimumHeight(40)
+        self.input_analog_hv.setStyleSheet("font-weight:bold; font-size: 16px; padding: 5px; border: 2px solid #CFD8DC; border-radius: 4px; background-color: #F1F8E9;")
+        
+        lbl_i = QLabel("Current (uA):")
+        lbl_i.setFont(QFont("Arial", 14, QFont.Bold))
+        self.input_analog_i = QLineEdit()
+        self.input_analog_i.setPlaceholderText("ex) 10")
+        self.input_analog_i.setMinimumHeight(40)
+        self.input_analog_i.setStyleSheet("font-weight:bold; font-size: 16px; padding: 5px; border: 2px solid #CFD8DC; border-radius: 4px; background-color: #F1F8E9;")
+        
+        hv_input_layout.addStretch()
+        hv_input_layout.addWidget(lbl_v)
+        hv_input_layout.addWidget(self.input_analog_hv)
+        hv_input_layout.addSpacing(30)
+        hv_input_layout.addWidget(lbl_i)
+        hv_input_layout.addWidget(self.input_analog_i)
+        hv_input_layout.addStretch()
 
+        lbl_notice = QLabel("※ 주의: 여기에 기입된 전압/전류 값은 데이터 수집(Run) 시 E-Log 데이터베이스에 자동 푸쉬(Push)되어 영구 기록됩니다.")
+        lbl_notice.setAlignment(Qt.AlignCenter)
+        lbl_notice.setStyleSheet("color: #D32F2F; font-weight: bold; font-size: 13px; padding-top: 15px;")
+        
+        analog_layout.addStretch()
+        analog_layout.addWidget(lbl_analog_mode)
+        analog_layout.addWidget(lbl_analog_desc)
+        
+        input_wrapper = QHBoxLayout()
+        input_wrapper.addStretch(1)
+        input_wrapper.addWidget(input_group, stretch=2)
+        input_wrapper.addStretch(1)
+        analog_layout.addLayout(input_wrapper)
+        
+        analog_layout.addWidget(lbl_notice)
+        analog_layout.addStretch()
+        
+        self.analog_widget.setStyleSheet("background-color: #ECEFF1; border-radius: 8px;") 
+        self.analog_widget.setVisible(False)
+        self.main_layout.addWidget(self.analog_widget)
+
+        # ==============================================================================
+        # CAEN 제어 패널 UI
+        # ==============================================================================
         self.caen_widget = QWidget()
         caen_layout = QVBoxLayout(self.caen_widget)
         caen_layout.setContentsMargins(0, 0, 0, 0)
         
-        # --- 상단 연결부 ---
         conn_layout = QHBoxLayout()
+        
+        # 💡 [추가] 통신 방식(TCP/IP vs USB) 선택 콤보박스
+        self.combo_link = QComboBox()
+        self.combo_link.addItems(["TCP/IP", "USB"])
+        self.combo_link.setStyleSheet("font-weight:bold; color:#1565C0;")
+        self.combo_link.currentIndexChanged.connect(self.on_link_type_changed)
+        
         self.input_ip = QLineEdit("192.168.0.10")
+        self.input_user = QLineEdit("admin")
+        self.input_pass = QLineEdit("admin")
+        self.input_pass.setEchoMode(QLineEdit.Password) 
+        self.input_user.setMaximumWidth(80)
+        self.input_pass.setMaximumWidth(80)
+        
         self.btn_conn = QPushButton("Connect CAEN (Auto-Scan)")
         self.btn_conn.setStyleSheet("background-color: #3F51B5; color: white; font-weight:bold;")
         self.btn_conn.clicked.connect(self.toggle_caen)
-        conn_layout.addWidget(QLabel("Mainframe IP:"))
-        conn_layout.addWidget(self.input_ip)
+        
+        conn_layout.addWidget(QLabel("Link:"))
+        conn_layout.addWidget(self.combo_link)
+        self.lbl_ip_node = QLabel("IP:")
+        conn_layout.addWidget(self.lbl_ip_node)
+        conn_layout.addWidget(self.input_ip, stretch=1)
+        conn_layout.addWidget(QLabel("User:"))
+        conn_layout.addWidget(self.input_user)
+        conn_layout.addWidget(QLabel("Pass:"))
+        conn_layout.addWidget(self.input_pass)
         conn_layout.addWidget(self.btn_conn)
         caen_layout.addLayout(conn_layout)
+
+        # 💡 [수정] 박스 여백(Padding)을 획기적으로 줄여 시인성을 확보했습니다.
+        self.caen_fallback_widget = QGroupBox("⚠️ Manual Input for DB (Server Offline / Exclusive Mode)")
+        self.caen_fallback_widget.setFont(QFont("Arial", 10, QFont.Bold))
+        self.caen_fallback_widget.setStyleSheet("""
+            QGroupBox { 
+                border: 2px solid #FFB300; 
+                border-radius: 6px; 
+                background-color: #FFF8E1; 
+                margin-top: 10px; 
+                margin-bottom: 5px;
+            }
+            QGroupBox::title { 
+                subcontrol-origin: margin; 
+                subcontrol-position: top left; 
+                left: 10px; 
+                color: #E65100; 
+            }
+        """)
+        fb_layout = QHBoxLayout(self.caen_fallback_widget)
+        fb_layout.setContentsMargins(10, 15, 10, 8) # 위아래 여백을 꽉 조였습니다!
+        
+        lbl_fb_notice = QLabel("※ 연결 실패 시, 아래 기입된 값이 런(Run) 기록 시 DB로 푸쉬됩니다.")
+        lbl_fb_notice.setStyleSheet("color: #D32F2F; font-weight: bold;")
+        fb_layout.addWidget(lbl_fb_notice)
+        fb_layout.addStretch()
+        
+        self.input_caen_fallback_v = QLineEdit()
+        self.input_caen_fallback_v.setPlaceholderText("Voltage (V)")
+        self.input_caen_fallback_v.setMinimumHeight(28)
+        self.input_caen_fallback_v.setStyleSheet("font-weight:bold; font-size: 13px; padding: 2px; border: 1px solid #B0BEC5; background-color: white;")
+        fb_layout.addWidget(self.input_caen_fallback_v)
+        
+        self.input_caen_fallback_i = QLineEdit()
+        self.input_caen_fallback_i.setPlaceholderText("Current (uA)")
+        self.input_caen_fallback_i.setMinimumHeight(28)
+        self.input_caen_fallback_i.setStyleSheet("font-weight:bold; font-size: 13px; padding: 2px; border: 1px solid #B0BEC5; background-color: white;")
+        fb_layout.addWidget(self.input_caen_fallback_i)
+        
+        caen_layout.addWidget(self.caen_fallback_widget)
 
         if not HAS_CAEN_LIBS:
             warn = QLabel("caen-libs 패키지가 설치되지 않았습니다. (pip install caen-libs 필요)")
             warn.setStyleSheet("color: red; font-weight: bold;")
             caen_layout.addWidget(warn)
 
-        # --- 슬롯 선택(콤보박스) 부 ---
         slot_layout = QHBoxLayout()
         self.combo_slot = QComboBox()
         self.combo_slot.setStyleSheet("font-weight: bold; padding: 5px;")
@@ -76,7 +211,6 @@ class HVControlPanel(QWidget):
         slot_layout.addWidget(self.combo_slot, stretch=1)
         caen_layout.addLayout(slot_layout)
 
-        # --- 동적 채널 패널 (스크롤 영역) ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_content = QWidget()
@@ -86,9 +220,50 @@ class HVControlPanel(QWidget):
         caen_layout.addWidget(self.scroll_area)
         self.main_layout.addWidget(self.caen_widget)
 
+    # 💡 [추가] 통신 방식이 바뀔 때 불필요한 입력을 잠그는 스마트 UI 로직
+    def on_link_type_changed(self):
+        if self.combo_link.currentText() == "USB":
+            self.lbl_ip_node.setText("Node:")
+            self.input_ip.setText("0") # 보통 USB는 Node 0번 사용
+            self.input_user.setEnabled(False)
+            self.input_pass.setEnabled(False)
+            self.input_user.setStyleSheet("background-color: #E0E0E0; color: #9E9E9E;")
+            self.input_pass.setStyleSheet("background-color: #E0E0E0; color: #9E9E9E;")
+        else:
+            self.lbl_ip_node.setText("IP:")
+            self.input_ip.setText("192.168.0.10")
+            self.input_user.setEnabled(True)
+            self.input_pass.setEnabled(True)
+            self.input_user.setStyleSheet("")
+            self.input_pass.setStyleSheet("")
+
+    def get_current_hv(self):
+        if self.cb_enable_scm.isChecked():
+            if self.device:
+                try:
+                    for board in self.crate_map:
+                        if board:
+                            vmon = self.device.get_ch_param(board.slot, [0], "VMon")[0]
+                            return f"{vmon:.1f}V (CAEN)"
+                except Exception:
+                    pass
+                return "CAEN (Online)"
+            else:
+                v = self.input_caen_fallback_v.text().strip()
+                i = self.input_caen_fallback_i.text().strip()
+                if v and i: return f"{v}V, {i}uA (Manual)"
+                elif v: return f"{v}V (Manual)"
+                else: return "N/A"
+        else:
+            v = self.input_analog_hv.text().strip()
+            i = self.input_analog_i.text().strip()
+            if v and i: return f"{v}V, {i}uA"
+            elif v: return f"{v}V"
+            else: return "N/A"
+
     def toggle_scm_mode(self, checked):
         self.caen_widget.setVisible(checked)
-        self.lbl_analog_mode.setVisible(not checked)
+        self.analog_widget.setVisible(not checked)
         if not checked and self.device is not None:
             self.toggle_caen() 
 
@@ -96,10 +271,15 @@ class HVControlPanel(QWidget):
         if not HAS_CAEN_LIBS: return
         if self.device is None:
             try:
-                ip = self.input_ip.text().strip()
-                self.device = hv.Device.open(hv.SystemType.SY4527, hv.LinkType.TCPIP, ip, "admin", "admin")
+                ip_or_node = self.input_ip.text().strip()
+                user = self.input_user.text().strip()
+                pwd = self.input_pass.text().strip()
                 
-                # 크레이트 맵 스캔 후 콤보박스 세팅
+                # 💡 선택된 통신 방식(TCPIP vs USB)에 따라 분기
+                link_type = hv.LinkType.TCPIP if self.combo_link.currentText() == "TCP/IP" else hv.LinkType.USB
+                
+                self.device = hv.Device.open(hv.SystemType.SY4527, link_type, ip_or_node, user, pwd)
+                
                 self.crate_map = self.device.get_crate_map()
                 self.combo_slot.blockSignals(True)
                 self.combo_slot.clear()
@@ -117,11 +297,11 @@ class HVControlPanel(QWidget):
 
                 self.btn_conn.setText("Disconnect")
                 self.btn_conn.setStyleSheet("background-color: #F44336; color: white; font-weight:bold;")
-                self.sig_log.emit(f"[CAEN] Connected to {ip} & Crate mapped.", False)
-                
-                # 1.5초 폴링 (현재 보이는 슬롯만 폴링)
+                self.sig_log.emit(f"[CAEN] Connected to {ip_or_node} via {self.combo_link.currentText()}.", False)
+                self.caen_fallback_widget.setVisible(False) 
                 self.hw_timer.start(1500) 
             except Exception as e:
+                self.caen_fallback_widget.setVisible(True) 
                 QMessageBox.critical(self, "Connection Error", str(e))
         else:
             self.hw_timer.stop()
@@ -132,6 +312,7 @@ class HVControlPanel(QWidget):
             self.btn_conn.setText("Connect CAEN (Auto-Scan)")
             self.btn_conn.setStyleSheet("background-color: #3F51B5; color: white; font-weight:bold;")
             self.clear_dynamic_ui()
+            self.caen_fallback_widget.setVisible(True) 
             self.sig_log.emit("[CAEN] Disconnected.", False)
 
     def clear_dynamic_ui(self):
@@ -269,7 +450,6 @@ class HVControlPanel(QWidget):
             pass 
 
     def force_shutdown(self):
-        # 긴급 셧다운 시에는 슬롯 상관없이 모든 보드 강제 OFF
         if self.cb_enable_scm.isChecked() and self.device:
             self.sig_log.emit("[CAEN] EMERGENCY SHUTDOWN applied.", True)
             for board in self.crate_map:
