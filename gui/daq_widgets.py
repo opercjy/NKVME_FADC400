@@ -198,9 +198,6 @@ class DAQControlTabWidget(QWidget):
         self.path_ctrl = PathControllerWidget("📁 Current Data Save Path:", self.data_dir)
         wrapper_layout.addWidget(self.path_ctrl)
 
-        # ==============================================================================
-        # 💡 [UI 추가] DB 연동 주의사항 박스 추가 (HV 패널과 연동됨을 사용자에게 인지)
-        # ==============================================================================
         lbl_hv_link = QLabel("🔗 [DB 연동 안내] 수집(Run) 시작 시 'HV Control' 탭에 설정된 고전압(HV) 값이 E-Log에 자동 기록(Push)됩니다.")
         lbl_hv_link.setStyleSheet("color: #D84315; font-weight: bold; background-color: #FBE9E7; padding: 8px; border-radius: 6px; border: 1px solid #FFAB91; margin-bottom: 5px;")
         wrapper_layout.addWidget(lbl_hv_link)
@@ -222,7 +219,23 @@ class DAQControlTabWidget(QWidget):
         
         self.combo_config = QComboBox()
         self.combo_config.currentIndexChanged.connect(self.emit_config_summary) 
-        self.input_runnum = QLineEdit(); self.input_runnum.setValidator(QRegExpValidator(QRegExp("^[0-9]+$")))
+        
+        # 💡 [핵심 패치] Prefix 텍스트 박스는 화면의 남은 공간을 모두 차지하도록 동적 확장
+        self.input_prefix = QLineEdit()
+        self.input_prefix.setText("run")
+        self.input_prefix.setToolTip("Custom prefix (e.g., laser_1khz, calib_cs137, bg_overnight)")
+        
+        self.input_runnum = QLineEdit()
+        self.input_runnum.setValidator(QRegExpValidator(QRegExp("^[0-9]+$")))
+        self.input_runnum.setFixedWidth(70) # 런 번호만 고정 크기 유지
+        
+        prefix_run_lay = QHBoxLayout()
+        prefix_run_lay.setContentsMargins(0, 0, 0, 0)
+        prefix_run_lay.setSpacing(4)
+        prefix_run_lay.addWidget(self.input_prefix, 1) # stretch=1: 창 크기에 맞춰 최대한 늘어남
+        prefix_run_lay.addWidget(QLabel("_"), 0)
+        prefix_run_lay.addWidget(self.input_runnum, 0)
+
         self.combo_runtag = QComboBox()
         self.combo_runtag.addItems(["TEST", "PHYSICS", "CALIBRATION", "COSMIC"])
         self.combo_runtag.setStyleSheet("background-color: #FFF3E0;")
@@ -233,7 +246,7 @@ class DAQControlTabWidget(QWidget):
         
         layout.addWidget(QLabel("Base Config File:")); layout.addWidget(self.combo_config)
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Run:")); row1.addWidget(self.input_runnum)
+        row1.addWidget(QLabel("File:")); row1.addLayout(prefix_run_lay)
         row1.addWidget(QLabel("Tag:")); row1.addWidget(self.combo_runtag)
         row1.addWidget(QLabel("Quality:")); row1.addWidget(self.combo_quality)
         layout.addLayout(row1)
@@ -343,6 +356,7 @@ class DAQControlTabWidget(QWidget):
 
     def get_common_params(self):
         return {
+            "prefix": self.input_prefix.text().strip() or "run",
             "run_num": self.input_runnum.text().strip(),
             "config_path": self.combo_config.currentData(),
             "enable_mon": self.chk_enable_mon.isChecked(),

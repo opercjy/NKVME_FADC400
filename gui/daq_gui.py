@@ -27,7 +27,6 @@ EXE_MONITOR = "OnlineMonitor_nfadc400"
 class DAQControlCenter(QMainWindow):
     def __init__(self):
         super().__init__()
-        # 💡 [수정] 불필요한 수식어 제거, 진중한 공식 명칭으로 복구
         self.setWindowTitle("6UVME+NFADC400 Central Control")
         self.setMinimumSize(1250, 900)
         
@@ -66,6 +65,7 @@ class DAQControlCenter(QMainWindow):
         self.auto_mode = "NONE" 
         self.scan_queue = []; self.scan_current_val = 0
         self.current_base_runnum = ""; self.current_subrun_idx = 1; self.subrun_max_idx = 1
+        self.current_prefix = "run"
         
         self.scan_timer = QTimer(self)
         self.scan_timer.timeout.connect(self.trigger_scan_timeout)
@@ -233,13 +233,17 @@ class DAQControlCenter(QMainWindow):
 
     def handle_start_manual(self, p):
         if not self.pre_start_check(p): return
-        self.auto_mode = "NONE"; run_num = p['run_num']
-        self.dashboard.set_mode(f"MANUAL [{run_num}]")
+        self.auto_mode = "NONE"
+        self.current_prefix = p['prefix']
+        
+        # 💡 [핵심 패치] 하드코딩된 'run_'을 모두 제거하고 file_base 조합으로 대체
+        file_base = f"{self.current_prefix}_{p['run_num']}"
+        self.dashboard.set_mode(f"MANUAL [{file_base}]")
         
         hv_volt = self.hv_panel.get_current_hv()
-        self.current_run_id = self.elog_panel.record_run(run_num, "MANUAL", p['tag'], hv_volt, p['quality'], p['desc'])
+        self.current_run_id = self.elog_panel.record_run(file_base, "MANUAL", p['tag'], hv_volt, p['quality'], p['desc'])
         
-        out_root = os.path.join(self.data_output_dir, f"run_{run_num}.root") 
+        out_root = os.path.join(self.data_output_dir, f"{file_base}.root") 
         args = ["-f", p['config_path'], "-o", out_root]
         if p['enable_mon']: args.append("-d")
         
@@ -269,6 +273,7 @@ class DAQControlCenter(QMainWindow):
     def handle_start_scan(self, p):
         if not self.pre_start_check(p): return
         self.auto_mode = "SCAN"
+        self.current_prefix = p['prefix']
         self.current_base_runnum = p['run_num']
         self.scan_params = p
         
@@ -285,12 +290,14 @@ class DAQControlCenter(QMainWindow):
         self.dashboard.set_progress(self.dashboard.auto_progress.maximum(), self.dashboard.auto_progress.maximum() - len(self.scan_queue))
         
         cfg_path = self.generate_scan_config(self.scan_params['config_path'], self.scan_current_val)
-        run_str = f"{self.current_base_runnum}_THR{self.scan_current_val}"
+        
+        # 💡 [핵심 패치]
+        file_base = f"{self.current_prefix}_{self.current_base_runnum}_THR{self.scan_current_val}"
         self.dashboard.set_mode(f"SCAN [THR={self.scan_current_val}]")
         
         hv_volt = self.hv_panel.get_current_hv()
-        self.current_run_id = self.elog_panel.record_run(run_str, "SCAN", "CALIBRATION", hv_volt, "PENDING", f"Auto Scan: THR={self.scan_current_val}")
-        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root") 
+        self.current_run_id = self.elog_panel.record_run(file_base, "SCAN", "CALIBRATION", hv_volt, "PENDING", f"Auto Scan: THR={self.scan_current_val}")
+        out_root = os.path.join(self.data_output_dir, f"{file_base}.root") 
         
         args = ["-f", cfg_path, "-o", out_root]
         if self.scan_params['enable_mon']: args.append("-d")
@@ -307,6 +314,7 @@ class DAQControlCenter(QMainWindow):
     def handle_start_longrun(self, p):
         if not self.pre_start_check(p): return
         self.auto_mode = "SUBRUN"
+        self.current_prefix = p['prefix']
         self.current_base_runnum = p['run_num']
         self.longrun_params = p
         
@@ -319,12 +327,13 @@ class DAQControlCenter(QMainWindow):
         if self.current_subrun_idx > self.subrun_max_idx: self.auto_finish(); return
         self.dashboard.set_progress(self.subrun_max_idx, self.current_subrun_idx)
         
-        run_str = f"{self.current_base_runnum}_part{self.current_subrun_idx:02d}"
+        # 💡 [핵심 패치]
+        file_base = f"{self.current_prefix}_{self.current_base_runnum}_part{self.current_subrun_idx:02d}"
         self.dashboard.set_mode(f"LONG RUN [{self.current_subrun_idx}/{self.subrun_max_idx}]")
         
         hv_volt = self.hv_panel.get_current_hv()
-        self.current_run_id = self.elog_panel.record_run(run_str, "LONG_RUN", "PHYSICS", hv_volt, "PENDING", f"Chunk {self.current_subrun_idx}/{self.subrun_max_idx}")
-        out_root = os.path.join(self.data_output_dir, f"run_{run_str}.root")
+        self.current_run_id = self.elog_panel.record_run(file_base, "LONG_RUN", "PHYSICS", hv_volt, "PENDING", f"Chunk {self.current_subrun_idx}/{self.subrun_max_idx}")
+        out_root = os.path.join(self.data_output_dir, f"{file_base}.root")
         
         args = ["-f", self.longrun_params['config_path'], "-o", out_root]
         if self.longrun_params['enable_mon']: args.append("-d")
