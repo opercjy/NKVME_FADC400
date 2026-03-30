@@ -95,6 +95,8 @@ sudo su
 
 # 2. 제조사 환경 변수 로드 (NKHOME 경로 설정 등)
 source nfadc400/notice_env.sh
+mkdir /usr/local/notice/include
+mkdir /usr/local/notice/lib
 
 # 3. USB-VME 브릿지 통신 라이브러리 설치
 cd nfadc400/src/6uvme/6uvme          
@@ -124,7 +126,7 @@ cd ../../../..
 ```bash
 sudo dnf install epel-release
 sudo dnf update
-sudo dnf install libusb1-devel python3-pip python3-devel cmake gcc-c++ make sqlite
+sudo dnf install libusb-devel libusbx-devel python3-pip python3-devel cmake gcc-c++ make sqlite
 pip3 install PyQt5 caen-libs
 ```
 
