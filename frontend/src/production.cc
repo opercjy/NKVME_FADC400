@@ -13,6 +13,21 @@
 
 using namespace std;
 
+// 💡 [UX 강화] 직관적이고 아름다운 Usage 출력 함수
+void PrintUsage() {
+    std::cout << "\n\033[1;36m======================================================================\033[0m\n";
+    std::cout << "\033[1;32m      NKVME_FADC400 - Offline Production & Analysis Tool\033[0m\n";
+    std::cout << "\033[1;36m======================================================================\033[0m\n";
+    std::cout << "\033[1;33mUsage:\033[0m production_nfadc400 -i <raw_file.root> [options]\n\n";
+    std::cout << "\033[1;37m[Required]\033[0m\n";
+    std::cout << "  -i <file>    : Input raw ROOT file path\n\n";
+    std::cout << "\033[1;37m[Optional]\033[0m\n";
+    std::cout << "  -o <file>    : Output processed ROOT file path (default: _prod.root)\n";
+    std::cout << "  -w           : Save full waveforms in the output tree (Warning: Large File)\n";
+    std::cout << "  -d           : Interactive Event Display Mode (Visual Waveform Debugger)\n";
+    std::cout << "\033[1;36m======================================================================\033[0m\n\n";
+}
+
 bool kbhit() {
     struct timeval tv = { 0L, 0L }; fd_set fds; FD_ZERO(&fds); FD_SET(STDIN_FILENO, &fds);
     return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
@@ -37,7 +52,7 @@ ProductionAnalyzer::ProductionAnalyzer(const char* inFile, const char* outFile, 
 
     _evtData = new RawData();
     _tIn->SetBranchAddress("RawData", &_evtData);
-    _nEntries = _tIn->GetEntries(); // 여기의 _nEntries는 사실 DUMP(블록)의 개수입니다.
+    _nEntries = _tIn->GetEntries(); 
     
     if (!_useDisplay) {
         _fOut = new TFile(outFile, "RECREATE");
@@ -111,7 +126,6 @@ void ProductionAnalyzer::RunBatch() {
         int nEventsInDump = _evtData->GetChannel(0)->GetNumEvents();
         int dataPoints = _evtData->GetChannel(0)->GetDataPoints();
 
-        // 💡 [핵심] 하나의 덤프를 까서 nEventsInDump 만큼 TTree를 찍어냅니다. (플랫 구조 보존)
         for (int evtIdx = 0; evtIdx < nEventsInDump; evtIdx++) {
             _pmtArray->Clear("C"); 
 
@@ -187,7 +201,7 @@ void ProductionAnalyzer::ShowEvent(int dumpIdx) {
         _histWave[chId]->Reset();
         
         std::vector<unsigned short> wave(dataPoints);
-        for(int pt=0; pt<dataPoints; pt++) wave[pt] = ch->GetSample(0, pt); // 0번째 이벤트만 디스플레이
+        for(int pt=0; pt<dataPoints; pt++) wave[pt] = ch->GetSample(0, pt); 
 
         double bsl, amp, time, charge;
         AnalyzeWaveform(wave, bsl, amp, time, charge, nullptr); 
@@ -260,7 +274,17 @@ int main(int argc, char ** argv) {
         }
     }
 
-    if(inFile == "") { ELog::Print(ELog::ERROR, "Usage: production -i <raw.root> [-o <prod.root>] [-d] [-w]"); return 1; }
+    // 💡 [UX 강화] 인자 부족 시 PrintUsage() 호출
+    if(inFile == "") { PrintUsage(); return 1; }
+    
+    // 💡 [버그 픽스] X11 환경 변수 체크 (Core Dump 방어)
+    if (useDisplay && gSystem->Getenv("DISPLAY") == nullptr) {
+        std::cout << "\n\033[1;31m[FATAL ERROR]\033[0m No X11 DISPLAY found!\n";
+        std::cout << "Cannot open Interactive Canvas in Headless mode.\n";
+        std::cout << "Please reconnect via SSH using '\033[1;33mssh -X\033[0m' or '\033[1;33mssh -Y\033[0m'.\n\n";
+        return 1;
+    }
+
     if(outFile == "prod.root" && inFile != "") {
         TString s(inFile); s.ReplaceAll(".root", "_prod.root"); outFile = s;
     }
