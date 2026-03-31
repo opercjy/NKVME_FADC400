@@ -27,6 +27,22 @@ std::atomic<bool> g_isRunning(true);
 ThreadSafeQueue<RawData*> g_dataQueue;
 ThreadSafeQueue<RawData*> g_freeQueue; 
 
+// 💡 [UX 강화] 직관적이고 아름다운 Usage 출력 함수
+void PrintUsage() {
+    std::cout << "\n\033[1;36m======================================================================\033[0m\n";
+    std::cout << "\033[1;32m      NKVME_FADC400 - High-Speed Data Acquisition Frontend\033[0m\n";
+    std::cout << "\033[1;36m======================================================================\033[0m\n";
+    std::cout << "\033[1;33mUsage:\033[0m frontend_nfadc400 -f <config_file> [options]\n\n";
+    std::cout << "\033[1;37m[Required]\033[0m\n";
+    std::cout << "  -f <file>    : Hardware configuration file path (e.g., ticket.config)\n\n";
+    std::cout << "\033[1;37m[Optional]\033[0m\n";
+    std::cout << "  -o <file>    : Output ROOT file path (default: data.root)\n";
+    std::cout << "  -n <events>  : Stop DAQ automatically after acquiring <events> events\n";
+    std::cout << "  -t <sec>     : Stop DAQ automatically after <sec> seconds (Steady Clock)\n";
+    std::cout << "  -d           : Enable Live DQM mode (Send stream to Online Monitor)\n";
+    std::cout << "\033[1;36m======================================================================\033[0m\n\n";
+}
+
 void SigIntHandler(int /*signum*/) {
     ELog::Print(ELog::WARNING, "\nInterrupt signal (Ctrl+C) received! Shutting down gracefully...");
     g_isRunning = false;
@@ -117,20 +133,23 @@ int main(int argc, char ** argv) {
     std::signal(SIGTERM, SigIntHandler);
 
     TString configFile = ""; TString outFile = "data.root";
-    int presetNEvt = 0; bool useDisplay = false; 
+    int presetNEvt = 0; int presetSec = 0; bool useDisplay = false; 
     
     int opt;
-    while((opt = getopt(argc, argv, "f:n:o:d")) != -1) {
+    // 💡 [기능 패치] -t 인자 추가 파싱
+    while((opt = getopt(argc, argv, "f:n:t:o:d")) != -1) {
         switch(opt) {
             case 'f': configFile = optarg; break;
             case 'n': presetNEvt = atoi(optarg); break;
+            case 't': presetSec = atoi(optarg); break;
             case 'o': outFile = optarg; break;
             case 'd': useDisplay = true; break; 
         }
     }
 
+    // 💡 [UX 강화] 인자 부족 시 PrintUsage() 호출
     if(configFile == "") {
-        ELog::Print(ELog::ERROR, "Usage: frontend -f <ticket.config> [-o <out.root>] [-n <events>] [-d]");
+        PrintUsage();
         return 1;
     }
 
@@ -167,7 +186,6 @@ int main(int argc, char ** argv) {
         if (bd->DCE() == 0) fadc.NFADC400enable_DCE(mid);
         else fadc.NFADC400disable_DCE(mid);
         
-        // 💡 [순서 주의] DACOFF 등 설정을 먼저 밀어넣음
         for (int ch = 0; ch < bd->NCHANNEL(); ch++) {
             int cid = bd->CID(ch) + 1; 
             fadc.NFADC400write_DACOFF(mid, cid, bd->DACOFF(ch));
@@ -186,7 +204,6 @@ int main(int argc, char ** argv) {
             fadc.NFADC400write_PWT(mid, cid, bd->PWT(ch));
         }
 
-        // 💡 [결정적 버그픽스] DACOFF 전압이 아날로그 회로에 정착할 시간을 준 뒤, Pedestal을 하드웨어에 각인!
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
         fadc.NFADC400measure_PED(mid, 0); 
         
@@ -217,6 +234,9 @@ int main(int argc, char ** argv) {
     TStopwatch sw; sw.Start();
     double lastTime = 0.0; int lastEvt = 0;
     auto lastPrintTime = std::chrono::steady_clock::now();
+    
+    // 💡 [기능 패치] NTP 동기화 에러를 막기 위한 안정적인 시작 시간 기록
+    auto daqStartTime = std::chrono::steady_clock::now();
 
     while (g_isRunning) {
         if (g_dataQueue.Size() > 20000) {
@@ -265,7 +285,9 @@ int main(int argc, char ** argv) {
         g_dataQueue.Push(dumpData);
         nevt += hevt; 
 
+        // 💡 [기능 패치] 이벤트 수 도달 시 종료
         if (presetNEvt > 0 && nevt >= presetNEvt) {
+            ELog::Print(ELog::INFO, Form("\nTarget events (%d) reached. Stopping DAQ.", presetNEvt));
             g_isRunning = false; break;
         }
 
@@ -278,6 +300,13 @@ int main(int argc, char ** argv) {
         }
 
         auto nowTime = std::chrono::steady_clock::now();
+        
+        // 💡 [기능 패치] 설정된 시간 도달 시 안전하게 종료 (NTP 패치 방어 적용)
+        if (presetSec > 0 && std::chrono::duration_cast<std::chrono::seconds>(nowTime - daqStartTime).count() >= presetSec) {
+            ELog::Print(ELog::INFO, Form("\nTarget time (%d sec) reached. Stopping DAQ.", presetSec));
+            g_isRunning = false; break;
+        }
+
         if (std::chrono::duration_cast<std::chrono::milliseconds>(nowTime - lastPrintTime).count() > 500) {
             double curTime = sw.RealTime(); sw.Continue();
             double dt = curTime - lastTime;
