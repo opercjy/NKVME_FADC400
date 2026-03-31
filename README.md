@@ -122,11 +122,12 @@ cd ../../../..
 ### 4.2 필수 패키지 설치
 
 **[Rocky Linux / AlmaLinux / CentOS]** - *권장 환경*
+Caen HV Wrapper 및 이전 세대 소프트웨어 통신을 위한 OpenSSL 1.1 호환성 패키지 compat-openssl11 필요
 
 ```bash
 sudo dnf install epel-release
 sudo dnf update
-sudo dnf install libusb-devel libusbx-devel python3-pip python3-devel cmake gcc-c++ make sqlite
+sudo dnf install compat-openssl11 libusb-devel libusbx-devel python3-pip python3-devel cmake gcc-c++ make sqlite
 pip3 install PyQt5 caen-libs
 ```
 
