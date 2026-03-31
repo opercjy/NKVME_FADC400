@@ -5,6 +5,7 @@
 #include <cmath>
 #include <unistd.h>
 #include <sys/select.h>
+#include <vector>
 
 #include "TApplication.h"
 #include "TSystem.h"
@@ -13,7 +14,10 @@
 
 using namespace std;
 
-// 💡 [UX 강화] 직관적이고 아름다운 Usage 출력 함수
+// 💡 [버그픽스] 덩어리(Block) 데이터를 개별 이벤트로 풀어주는 전역 인덱싱 맵
+static std::vector<std::pair<int, int>> s_eventMap; 
+
+// 💡 직관적이고 아름다운 Usage 출력 함수
 void PrintUsage() {
     std::cout << "\n\033[1;36m======================================================================\033[0m\n";
     std::cout << "\033[1;32m      NKVME_FADC400 - Offline Production & Analysis Tool\033[0m\n";
@@ -175,15 +179,22 @@ void ProductionAnalyzer::RunBatch() {
     ELog::Print(ELog::INFO, "Batch Processing Completed. Saved to output file.");
 }
 
-void ProductionAnalyzer::ShowEvent(int dumpIdx) {
-    if (dumpIdx < 0 || dumpIdx >= _nEntries) return;
-    _tIn->GetEntry(dumpIdx);
+// 💡 [핵심 버그 픽스] dumpIdx가 아닌 "글로벌 이벤트 인덱스"를 받아서 처리하도록 개조
+void ProductionAnalyzer::ShowEvent(int globalIdx) {
+    if (globalIdx < 0 || globalIdx >= (int)s_eventMap.size()) return;
+    
+    // 맵에서 이 이벤트가 속한 덩어리(Block)와 그 안에서의 번호(Sub-event)를 꺼냄
+    int targetDumpIdx = s_eventMap[globalIdx].first;
+    int targetEvtIdx  = s_eventMap[globalIdx].second;
+
+    _tIn->GetEntry(targetDumpIdx);
 
     int nCh = _evtData->GetNChannels();
     if(nCh == 0) return;
     int dataPoints = _evtData->GetChannel(0)->GetDataPoints();
     
-    cout << "\n\033[1;36m=== Dump Block " << dumpIdx << " / " << _nEntries - 1 << " (Showing 1st Event) ===\033[0m\n";
+    cout << "\n\033[1;36m=== Global Event " << globalIdx << " / " << s_eventMap.size() - 1 
+         << " (Dump Block: " << targetDumpIdx << ", Sub-event: " << targetEvtIdx << ") ===\033[0m\n";
 
     for (int i = 0; i < nCh && i < MAX_CH; i++) {
         RawChannel* ch = _evtData->GetChannel(i);
@@ -201,7 +212,8 @@ void ProductionAnalyzer::ShowEvent(int dumpIdx) {
         _histWave[chId]->Reset();
         
         std::vector<unsigned short> wave(dataPoints);
-        for(int pt=0; pt<dataPoints; pt++) wave[pt] = ch->GetSample(0, pt); 
+        // 💡 [버그 픽스] 강제 0번 파형이 아닌, 매핑된 서브 이벤트 인덱스의 파형을 가져옴!
+        for(int pt=0; pt<dataPoints; pt++) wave[pt] = ch->GetSample(targetEvtIdx, pt); 
 
         double bsl, amp, time, charge;
         AnalyzeWaveform(wave, bsl, amp, time, charge, nullptr); 
@@ -235,6 +247,25 @@ void ProductionAnalyzer::ShowEvent(int dumpIdx) {
 void ProductionAnalyzer::RunInteractive() {
     if (!_isValid || !_useDisplay) return;
     
+    // 💡 [버그 픽스] 시작 시 파일을 스캔하여 모든 이벤트의 매핑 주소를 메모리에 기록
+    s_eventMap.clear();
+    std::cout << "\033[1;33mIndexing Events for Interactive Mode...\033[0m" << std::flush;
+    for (int i = 0; i < _nEntries; i++) {
+        _tIn->GetEntry(i);
+        if (_evtData->GetNChannels() == 0) continue;
+        int nEvtsInDump = _evtData->GetChannel(0)->GetNumEvents();
+        for (int j = 0; j < nEvtsInDump; j++) {
+            s_eventMap.push_back({i, j}); // {Dump 블록 번호, 덩어리 내 서브 번호}
+        }
+    }
+    int totalEvts = s_eventMap.size();
+    std::cout << " Done. Found " << totalEvts << " events.\n";
+
+    if (totalEvts == 0) {
+        std::cout << "\033[1;31m[ERROR] No valid events found in this file!\033[0m\n";
+        return;
+    }
+
     int currEntry = 0; 
     ShowEvent(currEntry);
 
@@ -252,10 +283,10 @@ void ProductionAnalyzer::RunInteractive() {
 
         if (kbhit()) {
             string cmd;
-            getline(cin, cmd); // 💡 cin >> 대신 getline을 사용하여 ENTER 키 완벽 인식
+            getline(cin, cmd); 
 
             if (cmd.empty() || cmd == "n" || cmd == "N") {
-                if (currEntry < _nEntries - 1) currEntry++;
+                if (currEntry < totalEvts - 1) currEntry++;
                 ShowEvent(currEntry);
             }
             else if (cmd == "p" || cmd == "P") {
@@ -264,11 +295,11 @@ void ProductionAnalyzer::RunInteractive() {
             }
             else if (cmd == "j" || cmd == "J") {
                 int dest; 
-                cout << "Jump to Dump Block number (0 ~ " << _nEntries - 1 << "): "; 
+                cout << "Jump to Global Event number (0 ~ " << totalEvts - 1 << "): "; 
                 string destStr; getline(cin, destStr);
                 try {
                     dest = stoi(destStr);
-                    if (dest >= 0 && dest < _nEntries) { currEntry = dest; ShowEvent(currEntry); }
+                    if (dest >= 0 && dest < totalEvts) { currEntry = dest; ShowEvent(currEntry); }
                     else { cout << "\033[1;31m[ERROR] Out of range!\033[0m\n"; }
                 } catch(...) { cout << "\033[1;31m[ERROR] Invalid input!\033[0m\n"; }
             }
@@ -278,7 +309,7 @@ void ProductionAnalyzer::RunInteractive() {
             }
             cout << "\033[1;36mEvent " << currEntry << " Loaded.\033[0m [ENTER]: Next | [q]: Quit | [j]: Jump -> " << std::flush;
         }
-        usleep(10000); // 💡 10ms 대기: ROOT 캔버스가 얼지 않게 하면서 CPU 100% 폭주 방지
+        usleep(10000); 
     }
 }
 
@@ -296,10 +327,8 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // 💡 [UX 강화] 인자 부족 시 PrintUsage() 호출
     if(inFile == "") { PrintUsage(); return 1; }
     
-    // 💡 [버그 픽스] X11 환경 변수 체크 (Core Dump 방어)
     if (useDisplay && gSystem->Getenv("DISPLAY") == nullptr) {
         std::cout << "\n\033[1;31m[FATAL ERROR]\033[0m No X11 DISPLAY found!\n";
         std::cout << "Cannot open Interactive Canvas in Headless mode.\n";
