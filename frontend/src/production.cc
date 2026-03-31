@@ -237,26 +237,48 @@ void ProductionAnalyzer::RunInteractive() {
     
     int currEntry = 0; 
     ShowEvent(currEntry);
-    cout << "Commands: (n)ext, (p)rev, (j)ump, (q)uit > " << flush;
+
+    std::cout << "\n\033[1;35m========================================================\033[0m\n";
+    std::cout << "\033[1;32m   [ Interactive Display Mode Activated ]\033[0m\n";
+    std::cout << "   -> \033[1;33m[ENTER]\033[0m   : Next Event (다음 이벤트로 이동)\n";
+    std::cout << "   -> \033[1;36m[j]\033[0m       : Jump to Event (특정 이벤트로 워프)\n";
+    std::cout << "   -> \033[1;31m[q]\033[0m       : Quit (종료)\n";
+    std::cout << "\033[1;35m========================================================\033[0m\n\n";
+
+    std::cout << "\033[1;36mEvent " << currEntry << " Loaded.\033[0m [ENTER]: Next | [q]: Quit | [j]: Jump -> " << std::flush;
 
     while(true) {
         gSystem->ProcessEvents(); 
 
         if (kbhit()) {
             string cmd;
-            if (!(cin >> cmd)) { cin.clear(); cin.ignore(10000, '\n'); continue; }
-            char key = cmd[0];
+            getline(cin, cmd); // 💡 cin >> 대신 getline을 사용하여 ENTER 키 완벽 인식
 
-            if (key == 'n') { if (currEntry < _nEntries - 1) currEntry++; ShowEvent(currEntry); }
-            else if (key == 'p') { if (currEntry > 0) currEntry--; ShowEvent(currEntry); }
-            else if (key == 'j') {
-                int dest; cout << "Jump to Dump Block number: "; 
-                if (!(cin >> dest)) { cin.clear(); cin.ignore(10000, '\n'); cout << "\033[1;31m[ERROR] Invalid input!\033[0m\n"; continue; }
-                if (dest >= 0 && dest < _nEntries) { currEntry = dest; ShowEvent(currEntry); }
+            if (cmd.empty() || cmd == "n" || cmd == "N") {
+                if (currEntry < _nEntries - 1) currEntry++;
+                ShowEvent(currEntry);
             }
-            else if (key == 'q') { break; }
-            cout << "\nCommands: (n)ext, (p)rev, (j)ump, (q)uit > " << flush;
+            else if (cmd == "p" || cmd == "P") {
+                if (currEntry > 0) currEntry--;
+                ShowEvent(currEntry);
+            }
+            else if (cmd == "j" || cmd == "J") {
+                int dest; 
+                cout << "Jump to Dump Block number (0 ~ " << _nEntries - 1 << "): "; 
+                string destStr; getline(cin, destStr);
+                try {
+                    dest = stoi(destStr);
+                    if (dest >= 0 && dest < _nEntries) { currEntry = dest; ShowEvent(currEntry); }
+                    else { cout << "\033[1;31m[ERROR] Out of range!\033[0m\n"; }
+                } catch(...) { cout << "\033[1;31m[ERROR] Invalid input!\033[0m\n"; }
+            }
+            else if (cmd == "q" || cmd == "Q") {
+                cout << "\n\033[1;33mUser requested exit.\033[0m\n";
+                break;
+            }
+            cout << "\033[1;36mEvent " << currEntry << " Loaded.\033[0m [ENTER]: Next | [q]: Quit | [j]: Jump -> " << std::flush;
         }
+        usleep(10000); // 💡 10ms 대기: ROOT 캔버스가 얼지 않게 하면서 CPU 100% 폭주 방지
     }
 }
 
