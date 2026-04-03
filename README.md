@@ -62,7 +62,7 @@
 
 ```text
 NKVME_FADC400/
-├── bin/                       # 빌드된 C++ 실행 파일 및 Python GUI 스크립트 모음
+├── bin/                       # 빌드된 C++ 실행 파일 및 Python GUI 스크립트 모음, fadc400_gui (실행파일)
 ├── build/                     # CMake 빌드 디렉토리
 ├── config/                    # DAQ 하드웨어 설정 파일 모음 (ch1.config, ch8.config 등)
 ├── lib/                       # 오프라인 분석용 공유 라이브러리(.so) 및 ROOT 딕셔너리(.pcm)
