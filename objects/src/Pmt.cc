@@ -5,13 +5,13 @@ ClassImp(Pmt)
 
 Pmt::Pmt() : TObject(), 
     _id(0), _ndp(0), _wave(nullptr),
-    _pedmean(0), _pedrms(0), _qtot(-999.), _qmax(-999.), _fmax(-999.) 
+    _pedmean(0), _pedrms(0), _qtot(-999.), _qmax(-999.), _fmax(-999.), _hwTime(0), _trgPattern(0) 
 {
 }
 
 Pmt::Pmt(int id, int ndp) : TObject(), 
     _id(id), _ndp(ndp), _wave(nullptr),
-    _pedmean(0), _pedrms(0), _qtot(-999.), _qmax(-999.), _fmax(-999.) 
+    _pedmean(0), _pedrms(0), _qtot(-999.), _qmax(-999.), _fmax(-999.), _hwTime(0), _trgPattern(0) 
 {
     if(_ndp > 0) {
         _wave = new float[_ndp];
@@ -28,6 +28,8 @@ Pmt::~Pmt() {
 
 void Pmt::Clear(Option_t* opt) {
     TObject::Clear(opt);
+    _hwTime  = 0;
+    _trgPattern = 0;
     _pedmean = 0;
     _pedrms  = 0;
     _qtot    = -999.;
