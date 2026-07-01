@@ -2,6 +2,7 @@
 #define RawChannel_hh
 
 #include "TObject.h"
+#include <cstdint>
 
 class RawChannel : public TObject {
 public:
@@ -20,6 +21,10 @@ public:
     int GetDataPoints() const { return _dataPoints; }
 
     unsigned short GetSample(int evtIdx, int ptIdx) const;
+
+    // 8바이트 TAG 데이터에서 48-bit 하드웨어 시간 및 트리거 패턴 파싱 (Little-Endian)
+    uint64_t GetHardwareTime(int evtIdx) const;
+    uint16_t GetTriggerPattern(int evtIdx) const;
 
     virtual void Clear(Option_t* opt = "") override;
 
