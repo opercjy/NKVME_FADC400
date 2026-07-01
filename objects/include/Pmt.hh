@@ -2,6 +2,7 @@
 #define Pmt_hh
 
 #include "TObject.h"
+#include <cstdint>
 
 class Pmt : public TObject {
 public:
@@ -20,6 +21,8 @@ public:
     void SetQtot   (double val) { _qtot    = val; }
     void SetQmax   (double val) { _qmax    = val; }
     void SetFmax   (double val) { _fmax    = val; }
+    void SetHwTime(uint64_t val)     { _hwTime = val; }
+    void SetTrgPattern(uint16_t val) { _trgPattern = val; }
   
     int    Id()       const { return _id     ; }
     int    Ndp()      const { return _ndp    ; }
@@ -28,6 +31,8 @@ public:
     double Qtot()     const { return _qtot   ; }
     double Qmax()     const { return _qmax   ; }
     double Fmax()     const { return _fmax   ; }
+    uint64_t HwTime() const     { return _hwTime; }
+    uint16_t TrgPattern() const { return _trgPattern; }
 
     float * Waveform() const { return _wave; }
 
@@ -43,6 +48,9 @@ private:
     double _qmax   ;
     double _fmax   ;
 
-    ClassDefOverride(Pmt, 1);
+    uint64_t _hwTime;       // 하드웨어 절대 시간 변수
+    uint16_t _trgPattern;   // 동시계수 확인용 트리거 패턴 변수
+
+    ClassDefOverride(Pmt, 2);
 };
 #endif
