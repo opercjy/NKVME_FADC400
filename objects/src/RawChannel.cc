@@ -51,3 +51,19 @@ unsigned short RawChannel::GetSample(int evtIdx, int ptIdx) const {
     // Little-endian 디코딩 (Notice VME 버스 통신 규격 적용)
     return ((_bulkData[offset + 1] << 8) | _bulkData[offset]) & 0x0FFF;
 }
+
+uint64_t RawChannel::GetHardwareTime(int evtIdx) const {
+    if (!_tagData || evtIdx >= _numEvents) return 0;
+    uint64_t hw_time = 0;
+    int offset = evtIdx * 8;
+    for(int i = 0; i < 6; i++) {
+        hw_time |= ((uint64_t)(_tagData[offset + i] & 0xFF)) << (8 * i);
+    }
+    return hw_time;
+}
+
+uint16_t RawChannel::GetTriggerPattern(int evtIdx) const {
+    if (!_tagData || evtIdx >= _numEvents) return 0;
+    int offset = evtIdx * 8;
+    return ((_tagData[offset + 7] & 0xFF) << 8) | (_tagData[offset + 6] & 0xFF);
+}
