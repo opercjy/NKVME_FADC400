@@ -10,7 +10,7 @@
 #include "TApplication.h"
 #include "TSystem.h"
 #include "TStyle.h"
-#include "TStopwatch.h"  
+#include "TStopwatch.h"
 
 using namespace std;
 
@@ -90,11 +90,14 @@ ProductionAnalyzer::~ProductionAnalyzer() {
     if (_fIn)  { _fIn->Close();  delete _fIn; }
 }
 
-void ProductionAnalyzer::AnalyzeWaveform(const vector<unsigned short>& wave, double &bsl, double &amp, double &time, double &charge, float* outWave) {
+void ProductionAnalyzer::AnalyzeWaveform(const std::vector<unsigned short>& wave, double &bsl, double &amp, double &time, double &charge, float* outWave) {
     int ndp = wave.size();
     if (ndp < 30) { bsl = 0; amp = 0; time = 0; charge = 0; return; }
 
-    int ped_s = 2; int ped_e = std::min(40, ndp / 5); int sig_s = ped_e + 5;
+    int ped_s = 1; 
+    int ped_e = std::min(15, ndp / 5); // 앞쪽 15 bin 안전지대만 페데스탈로 사용
+    int sig_s = ped_e + 2;
+
     double pedSum = 0; int nPed = 0;
     for(int i = ped_s; i <= ped_e; i++){ pedSum += wave[i]; nPed++; }
     bsl = (nPed > 0) ? pedSum / nPed : 0;
@@ -127,21 +130,33 @@ void ProductionAnalyzer::RunBatch() {
         int nCh = _evtData->GetNChannels();
         if(nCh == 0) continue;
         
-        int nEventsInDump = _evtData->GetChannel(0)->GetNumEvents();
+        // 💡 [배열 초과 방어] 0번 채널을 맹신하지 않고, 현재 덤프 내 최대 이벤트 갯수를 추출
+        int maxEventsInDump = 0;
+        for (int i = 0; i < nCh; i++) {
+            if (_evtData->GetChannel(i) && _evtData->GetChannel(i)->GetNumEvents() > maxEventsInDump) {
+                maxEventsInDump = _evtData->GetChannel(i)->GetNumEvents();
+            }
+        }
         int dataPoints = _evtData->GetChannel(0)->GetDataPoints();
 
-        for (int evtIdx = 0; evtIdx < nEventsInDump; evtIdx++) {
+        for (int evtIdx = 0; evtIdx < maxEventsInDump; evtIdx++) {
             _pmtArray->Clear("C"); 
 
             for (int i = 0; i < nCh; i++) {
                 RawChannel* ch = _evtData->GetChannel(i);
-                if (!ch) continue;
+                
+                // 💡 해당 채널에 데이터가 모자랄 경우 안전하게 스킵
+                if (!ch || evtIdx >= ch->GetNumEvents()) continue; 
                 
                 int chId = ch->GetChId();
                 if (chId < 0 || chId >= MAX_CH) continue;
 
                 Pmt* pmt = (Pmt*)_pmtArray->ConstructedAt(i);
                 pmt->SetId(chId);
+
+                // 🌟 [가장 중요] 하드웨어 절대 시간 및 트리거 패턴 기록!!!
+                pmt->SetHwTime(ch->GetHardwareTime(evtIdx));
+                pmt->SetTrgPattern(ch->GetTriggerPattern(evtIdx));
 
                 if (_saveWaveform) pmt->AllocateWaveform(dataPoints);
 
