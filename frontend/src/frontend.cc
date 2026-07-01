@@ -69,7 +69,7 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
         Int_t oldLevel = gErrorIgnoreLevel; gErrorIgnoreLevel = kFatal; 
         socket = new TSocket("localhost", 9090);
         if (socket->IsValid()) {
-            socket->SetOption(kNoBlock, 1);
+            socket->SetOption(kSendTimeout, 50); // 💡 소켓 파편화/크래시 방어
             ELog::Print(ELog::INFO, "Connected to Display Server (localhost:9090)");
         } else { delete socket; socket = nullptr; }
         gErrorIgnoreLevel = oldLevel; 
@@ -93,7 +93,7 @@ void ConsumerWorker(const char* outFileName, bool useDisplay) {
                     Int_t oldLevel = gErrorIgnoreLevel; gErrorIgnoreLevel = kFatal; 
                     socket = new TSocket("localhost", 9090);
                     if (socket->IsValid()) {
-                        socket->SetOption(kNoBlock, 1);
+                        socket->SetOption(kSendTimeout, 50); // 💡 소켓 파편화/크래시 방어
                     } else { delete socket; socket = nullptr; }
                     gErrorIgnoreLevel = oldLevel; 
                     lastConnTry = now;
@@ -239,7 +239,8 @@ int main(int argc, char ** argv) {
     auto daqStartTime = std::chrono::steady_clock::now();
 
     while (g_isRunning) {
-        if (g_dataQueue.Size() > 20000) {
+        // 💡 2만 개는 RAM을 순식간에 고갈시킵니다. 500 단위로 낮춰 쓰로틀링(Throttling)을 겁니다.
+        if (g_dataQueue.Size() > 500) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
